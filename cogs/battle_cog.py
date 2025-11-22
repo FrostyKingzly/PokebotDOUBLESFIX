@@ -421,13 +421,14 @@ class BattleCog(commands.Cog):
         return discord.Embed(title=title, description="\n".join(messages), color=embed_color)
 
     async def _send_turn_resolution(self, interaction: discord.Interaction, turn_result: dict):
+        # Send turn result first, then switch messages (fixes issue where switch embed appeared before turn result)
+        turn_msgs = turn_result.get("narration", []) or turn_result.get("messages", [])
+        await interaction.followup.send(embed=self._build_turn_embed(turn_msgs))
+
         switch_msgs = [msg for msg in (turn_result.get('switch_messages') or []) if msg]
         switch_embed = self._build_switch_embed(switch_msgs)
         if switch_embed:
             await interaction.followup.send(embed=switch_embed)
-
-        turn_msgs = turn_result.get("narration", []) or turn_result.get("messages", [])
-        await interaction.followup.send(embed=self._build_turn_embed(turn_msgs))
 
     async def _prompt_forced_switch(self, interaction: discord.Interaction, battle, battler_id: int):
         if battler_id != battle.trainer.battler_id:
@@ -437,16 +438,32 @@ class BattleCog(commands.Cog):
             )
             return
 
-        fainted = battle.trainer.get_active_pokemon()[0] if battle.trainer.get_active_pokemon() else None
-        if fainted:
-            desc = (
-                f"**{fainted.species_name}** can no longer fight!\n\n"
-                "Select another healthy Pokémon to continue the battle."
-            )
-        else:
-            desc = "Select another healthy Pokémon to continue the battle."
+        # Check if this is a U-turn/Volt Switch or a fainted Pokemon
+        is_volt_switch = battle.phase == 'VOLT_SWITCH'
 
-        embed = discord.Embed(title="Pokémon Fainted!", description=desc, color=discord.Color.red())
+        if is_volt_switch:
+            # U-turn/Volt Switch case
+            active_mon = battle.trainer.get_active_pokemon()[0] if battle.trainer.get_active_pokemon() else None
+            if active_mon:
+                desc = (
+                    f"**{active_mon.species_name}** will switch out!\n\n"
+                    "Select another Pokémon to switch in."
+                )
+            else:
+                desc = "Select a Pokémon to switch in."
+            embed = discord.Embed(title="Switch Required!", description=desc, color=discord.Color.blue())
+        else:
+            # Fainted Pokemon case
+            fainted = battle.trainer.get_active_pokemon()[0] if battle.trainer.get_active_pokemon() else None
+            if fainted:
+                desc = (
+                    f"**{fainted.species_name}** can no longer fight!\n\n"
+                    "Select another healthy Pokémon to continue the battle."
+                )
+            else:
+                desc = "Select another healthy Pokémon to continue the battle."
+            embed = discord.Embed(title="Pokémon Fainted!", description=desc, color=discord.Color.red())
+
         await interaction.followup.send(
             embed=embed,
             view=PartySelectView(battle, battler_id, self.battle_engine, forced=True)
@@ -600,7 +617,8 @@ class BattleCog(commands.Cog):
             await self._finish_battle(interaction, battle)
             return
 
-        if battle.phase == 'FORCED_SWITCH' and battle.forced_switch_battler_id:
+        # Check for forced switches (either from KO or from U-turn/Volt Switch)
+        if battle.phase in ['FORCED_SWITCH', 'VOLT_SWITCH'] and battle.forced_switch_battler_id:
             await self._prompt_forced_switch(interaction, battle, battle.forced_switch_battler_id)
             return
 
@@ -831,7 +849,7 @@ class MoveButton(discord.ui.Button):
                 desc = "The turn resolves."
             e = discord.Embed(title="Turn Result", description=desc, color=discord.Color.orange())
             await interaction.followup.send(embed=e)
-            # Send separate AI send-out embed if present
+            # Send separate AI send-out embed AFTER turn result (not before)
             switch_msgs = turn.get('switch_messages') or []
             if switch_msgs:
                 send_embed = discord.Embed(title='Send-out', description='\n\n'.join(switch_msgs), color=discord.Color.blurple())

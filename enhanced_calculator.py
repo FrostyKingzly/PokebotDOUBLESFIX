@@ -137,6 +137,29 @@ class EnhancedDamageCalculator:
             damage = max(1, defender.current_hp // 2)
             return damage, False, 1.0
 
+        # Level-based damage moves (Night Shade, Seismic Toss, etc.)
+        if move_id in {'night_shade', 'seismic_toss', 'psywave', 'sonic_boom', 'dragon_rage'}:
+            # Check for type immunity
+            effectiveness = self._get_type_effectiveness(move_data['type'], defender.species_data['types'])
+            if effectiveness == 0:
+                return 0, False, 0
+
+            # Calculate fixed damage based on move type
+            if move_id in {'night_shade', 'seismic_toss'}:
+                # Damage = user's level
+                damage = level
+            elif move_id == 'psywave':
+                # Damage = random(0.5x to 1.5x level)
+                damage = int(level * random.uniform(0.5, 1.5))
+            elif move_id == 'sonic_boom':
+                # Always deals 20 damage
+                damage = 20
+            elif move_id == 'dragon_rage':
+                # Always deals 40 damage
+                damage = 40
+
+            return max(1, damage), False, 1.0
+
         # Safety check: Status moves or moves with no power
         if power is None:
             return 0, False, 1.0

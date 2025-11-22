@@ -600,17 +600,34 @@ class BattleEngine:
         battle.pending_actions[action_key] = action
         
         # Check if we have all actions needed
-        required_actions = []
-        if not battle.trainer.is_ai:
-            required_actions.append(str(battle.trainer.battler_id))
-        if not battle.opponent.is_ai:
-            required_actions.append(str(battle.opponent.battler_id))
-        
-        all_actions_ready = all(str(rid) in battle.pending_actions for rid in required_actions)
-        
+        # For doubles, we need actions from all active Pokemon
+        if battle.battle_format == BattleFormat.DOUBLES:
+            required_action_keys = []
+            if not battle.trainer.is_ai:
+                num_trainer_active = len(battle.trainer.get_active_pokemon())
+                for pos in range(num_trainer_active):
+                    required_action_keys.append(f"{battle.trainer.battler_id}_{pos}")
+            if not battle.opponent.is_ai:
+                num_opponent_active = len(battle.opponent.get_active_pokemon())
+                for pos in range(num_opponent_active):
+                    required_action_keys.append(f"{battle.opponent.battler_id}_{pos}")
+
+            all_actions_ready = all(key in battle.pending_actions for key in required_action_keys)
+            waiting_for = [key for key in required_action_keys if key not in battle.pending_actions]
+        else:
+            # Singles - simple battler_id check
+            required_actions = []
+            if not battle.trainer.is_ai:
+                required_actions.append(str(battle.trainer.battler_id))
+            if not battle.opponent.is_ai:
+                required_actions.append(str(battle.opponent.battler_id))
+
+            all_actions_ready = all(str(rid) in battle.pending_actions for rid in required_actions)
+            waiting_for = [rid for rid in required_actions if str(rid) not in battle.pending_actions]
+
         return {
             "success": True,
-            "waiting_for": [rid for rid in required_actions if str(rid) not in battle.pending_actions],
+            "waiting_for": waiting_for,
             "ready_to_resolve": all_actions_ready
         }
     
