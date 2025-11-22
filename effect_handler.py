@@ -109,7 +109,7 @@ class EffectHandler:
         # Protect-like moves (block attacks this turn)
         if move_id in ['protect', 'detect']:
             effects.append(MoveEffect(
-                effect_type='volatile',
+                effect_type='inflict_volatile',
                 chance=100,
                 target='self',
                 params={'status': 'protect'}
@@ -118,7 +118,7 @@ class EffectHandler:
         # Endure (survive this turn at 1 HP)
         if move_id == 'endure':
             effects.append(MoveEffect(
-                effect_type='volatile',
+                effect_type='inflict_volatile',
                 chance=100,
                 target='self',
                 params={'status': 'endure'}
