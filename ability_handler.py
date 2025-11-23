@@ -106,7 +106,21 @@ class AbilityHandler:
                 if weather and getattr(battle_state, 'weather', None) != weather:
                     battle_state.weather = weather
                     battle_state.weather_turns = int(ability.get('duration', 5))
-                    msgs.append(f"{getattr(pokemon, 'species_name', 'The Pokémon')}'s {ability.get('name', ability_id)} whipped up a {weather}!")
+
+                    # Use proper in-game messages for each weather ability
+                    ability_name = ability.get('name', ability_id)
+                    pokemon_name = getattr(pokemon, 'species_name', 'The Pokémon')
+
+                    # Match official Pokemon game messages
+                    weather_messages = {
+                        'sun': f"{pokemon_name}'s {ability_name} intensified the sun's rays!",
+                        'rain': f"{pokemon_name}'s {ability_name} made it rain!",
+                        'sandstorm': f"{pokemon_name}'s {ability_name} whipped up a sandstorm!",
+                        'hail': f"{pokemon_name}'s {ability_name} made it hail!",
+                        'snow': f"{pokemon_name}'s {ability_name} made it snow!"
+                    }
+
+                    msgs.append(weather_messages.get(weather, f"{pokemon_name}'s {ability_name} changed the weather!"))
             elif effect == 'terrain':
                 terrain = ability.get('terrain')
                 if terrain and getattr(battle_state, 'terrain', None) != terrain:

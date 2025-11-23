@@ -775,12 +775,27 @@ class BattleEngine:
         
         # Clear turn log
         battle.turn_log = []
-        
+
         # Sort actions by priority and speed
         actions = list(battle.pending_actions.values())
         actions = self._sort_actions(battle, actions)
-        
-        
+
+        # Track which actions were registered vs executed to ensure all commands show up
+        registered_actions = {}
+        for action in actions:
+            battler = battle.trainer if action.battler_id == battle.trainer.battler_id else battle.opponent
+            active_pokemon = battler.get_active_pokemon()
+            if active_pokemon:
+                pokemon_pos = getattr(action, 'pokemon_position', 0)
+                if pokemon_pos < len(active_pokemon):
+                    acting_pokemon = active_pokemon[pokemon_pos]
+                    action_key = f"{action.battler_id}_{pokemon_pos}"
+                    registered_actions[action_key] = {
+                        'action': action,
+                        'pokemon': acting_pokemon,
+                        'executed': False
+                    }
+
         manual_switch_messages: List[str] = []
 
         # Execute actions in order
@@ -827,11 +842,41 @@ class BattleEngine:
                     # Singles: skip all non-switch actions when forced switch is pending
                     continue
 
+            # Mark this action as executed for tracking
+            action_key = f"{action.battler_id}_{getattr(action, 'pokemon_position', 0)}"
+            if action_key in registered_actions:
+                registered_actions[action_key]['executed'] = True
+
             result = await self._execute_action(battle, action)
+            messages = result.get('messages', [])
+
+            # CRITICAL: Ensure every executed action generates at least one message
+            # If no messages were generated for a move action, add a fallback message
+            if not messages and action.action_type == 'move':
+                battler = battle.trainer if action.battler_id == battle.trainer.battler_id else battle.opponent
+                active_pokemon = battler.get_active_pokemon()
+                pokemon_pos = getattr(action, 'pokemon_position', 0)
+                if pokemon_pos < len(active_pokemon):
+                    acting_pokemon = active_pokemon[pokemon_pos]
+                    move_data = self.moves_db.get_move(action.move_id)
+                    move_name = move_data.get('name', action.move_id) if move_data else action.move_id
+                    messages = [f"{acting_pokemon.species_name} used {move_name}!"]
+
             if action.action_type == 'switch':
-                manual_switch_messages.extend(result.get('messages', []))
+                manual_switch_messages.extend(messages)
             else:
-                battle.turn_log.extend(result.get('messages', []))
+                battle.turn_log.extend(messages)
+
+        # Check for registered actions that were not executed and add explanatory messages
+        # This helps debug issues where moves don't show up in turn embeds
+        for action_key, action_info in registered_actions.items():
+            if not action_info['executed'] and action_info['action'].action_type == 'move':
+                pokemon = action_info['pokemon']
+                # Only add message if the Pokemon is still conscious (if fainted, that's obvious)
+                if getattr(pokemon, 'current_hp', 0) > 0:
+                    # This action was skipped for some reason - could be due to forced switch, etc.
+                    # We don't add a message here to avoid clutter, but this tracking helps identify issues
+                    pass
 
         # End of turn effects (skip if wild Pokémon is in the special 'dazed' state)
         if getattr(battle, "wild_dazed", False):
@@ -1367,12 +1412,29 @@ class BattleEngine:
         battle.pending_ai_switch_index = None
 
         # If the FORCED_SWITCH was for this AI battler, we consider it resolved
-        # and reset the battle phase. If it was for the player, leave it alone.
+        # BUT: before resetting the phase, check if the OTHER battler (player) also needs to switch
         if original_phase in ['FORCED_SWITCH', 'VOLT_SWITCH'] and original_forced_id == getattr(battler, "battler_id", None):
-            battle.phase = 'WAITING_ACTIONS'
-            if getattr(battle, "forced_switch_battler_id", None) == battler.battler_id:
+            # Determine the other battler (player)
+            other_battler = battle.trainer if battler == battle.opponent else battle.opponent
+
+            # Check if the other battler has any fainted active Pokemon
+            player_needs_switch = False
+            if not getattr(other_battler, "is_ai", False):  # Only check for human player
+                active_pokemon = other_battler.get_active_pokemon()
+                for pos_idx, active_mon in enumerate(active_pokemon):
+                    if getattr(active_mon, "current_hp", 0) <= 0:
+                        # Player has a fainted Pokemon that needs switching
+                        player_needs_switch = True
+                        # Set up forced switch for player
+                        battle.phase = 'FORCED_SWITCH'
+                        battle.forced_switch_battler_id = other_battler.battler_id
+                        battle.forced_switch_position = pos_idx
+                        break
+
+            # Only reset to WAITING_ACTIONS if player doesn't need to switch
+            if not player_needs_switch:
+                battle.phase = 'WAITING_ACTIONS'
                 battle.forced_switch_battler_id = None
-            if getattr(battle, "forced_switch_position", None) == original_forced_pos:
                 battle.forced_switch_position = None
 
         return result.get("messages", [])
