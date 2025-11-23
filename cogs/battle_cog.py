@@ -301,74 +301,76 @@ class BattleCog(commands.Cog):
         enc.set_footer(text=f"Build: {BUILD_TAG}")
         await interaction.followup.send(embed=enc)
 
-        # 2) Send-out + entry effects
-        sendout_lines = []
+        # 2) Send-out + entry effects - separate embeds for each Pokemon
 
-        if battle_mode == BattleType.WILD:
-            # Wild battles - only show player's Pokemon
-            if len(trainer_active) == 1:
-                sendout_lines.append(
-                    f"**{battle.trainer.battler_name}** sent out **{trainer_active[0].species_name}**!"
-                )
-            else:
-                # Doubles wild battle (rare but possible)
-                pokemon_names = " and ".join([f"**{mon.species_name}**" for mon in trainer_active])
-                sendout_lines.append(
-                    f"**{battle.trainer.battler_name}** sent out {pokemon_names}!"
-                )
-        else:
-            # Trainer battles - show both sides
-            if len(trainer_active) == 1:
-                sendout_lines.append(
-                    f"**{battle.trainer.battler_name}** sent out **{trainer_active[0].species_name}**!"
-                )
-            else:
-                # Doubles - show all Pokemon
-                pokemon_names = " and ".join([f"**{mon.species_name}**" for mon in trainer_active])
-                sendout_lines.append(
-                    f"**{battle.trainer.battler_name}** sent out {pokemon_names}!"
-                )
+        # Gather entry messages to show once after all send-outs
+        entry_messages = list(getattr(battle, "entry_messages", []) or [])
 
-            if len(opponent_active) == 1:
-                sendout_lines.append(
-                    f"**{battle.opponent.battler_name}** sent out **{opponent_active[0].species_name}**!"
-                )
-            else:
-                # Doubles - show all Pokemon
-                pokemon_names = " and ".join([f"**{mon.species_name}**" for mon in opponent_active])
-                sendout_lines.append(
-                    f"**{battle.opponent.battler_name}** sent out {pokemon_names}!"
-                )
+        # Send out trainer's Pokemon first (one embed per Pokemon)
+        for idx, mon in enumerate(trainer_active):
+            position_text = f" (Slot {idx+1})" if len(trainer_active) > 1 else ""
+            description = f"**{battle.trainer.battler_name}** sent out **{mon.species_name}**{position_text}!"
 
-        for msg in (getattr(battle, "entry_messages", []) or []):
-            sendout_lines.append(f"• {msg}")
+            send_embed = discord.Embed(
+                title="Send-out",
+                description=description,
+                color=discord.Color.blurple()
+            )
 
-        send_embed = discord.Embed(
-            title="Send-out",
-            description="\n".join(sendout_lines),
-            color=discord.Color.blurple()
-        )
-
-        # Add sprite of player's first Pokemon
-        if trainer_active:
+            # Add sprite
             sprite_url = PokemonSpriteHelper.get_sprite(
-                trainer_active[0].species_name,
-                trainer_active[0].species_dex_number,
+                mon.species_name,
+                mon.species_dex_number,
                 style='animated'
             )
             send_embed.set_thumbnail(url=sprite_url)
 
-        fields = []
-        if getattr(battle, "weather", None):
-            wt = getattr(battle, "weather_turns", None)
-            fields.append(f"Weather: **{battle.weather.title()}**" + (f" ({wt} turns)" if wt else ""))
-        if getattr(battle, "terrain", None):
-            tt = getattr(battle, "terrain_turns", None)
-            fields.append(f"Terrain: **{battle.terrain.title()}**" + (f" ({tt} turns)" if tt else ""))
-        if fields:
-            send_embed.add_field(name=f"{FIELD} Field Effects", value="\n".join(fields), inline=False)
+            await interaction.followup.send(embed=send_embed)
 
-        await interaction.followup.send(embed=send_embed)
+        # For trainer battles, also send out opponent's Pokemon (one embed per Pokemon)
+        if battle_mode != BattleType.WILD:
+            for idx, mon in enumerate(opponent_active):
+                position_text = f" (Slot {idx+1})" if len(opponent_active) > 1 else ""
+                description = f"**{battle.opponent.battler_name}** sent out **{mon.species_name}**{position_text}!"
+
+                send_embed = discord.Embed(
+                    title="Send-out",
+                    description=description,
+                    color=discord.Color.blurple()
+                )
+
+                # Add sprite
+                sprite_url = PokemonSpriteHelper.get_sprite(
+                    mon.species_name,
+                    mon.species_dex_number,
+                    style='animated'
+                )
+                send_embed.set_thumbnail(url=sprite_url)
+
+                await interaction.followup.send(embed=send_embed)
+
+        # If there are entry messages or field effects, send them in a final embed
+        if entry_messages or getattr(battle, "weather", None) or getattr(battle, "terrain", None):
+            effects_embed = discord.Embed(
+                title=f"{FIELD} Field Effects",
+                color=discord.Color.blurple()
+            )
+
+            if entry_messages:
+                effects_embed.description = "\n".join([f"• {msg}" for msg in entry_messages])
+
+            fields = []
+            if getattr(battle, "weather", None):
+                wt = getattr(battle, "weather_turns", None)
+                fields.append(f"Weather: **{battle.weather.title()}**" + (f" ({wt} turns)" if wt else ""))
+            if getattr(battle, "terrain", None):
+                tt = getattr(battle, "terrain_turns", None)
+                fields.append(f"Terrain: **{battle.terrain.title()}**" + (f" ({tt} turns)" if tt else ""))
+
+            if fields:
+                effects_embed.add_field(name="Conditions", value="\n".join(fields), inline=False)
+
+            await interaction.followup.send(embed=effects_embed)
 
         # 3) Main action embed + view
         main_embed = self._create_battle_embed(battle)
@@ -402,15 +404,6 @@ class BattleCog(commands.Cog):
             description=f"**Turn {battle.turn_number}**",
             color=discord.Color.dark_grey()
         )
-
-        # Add sprite of opponent's first Pokemon
-        if opponent_active:
-            sprite_url = PokemonSpriteHelper.get_sprite(
-                opponent_active[0].species_name,
-                opponent_active[0].species_dex_number,
-                style='animated'
-            )
-            e.set_thumbnail(url=sprite_url)
 
         # Show all active opponent Pokemon
         for idx, opp_mon in enumerate(opponent_active):
