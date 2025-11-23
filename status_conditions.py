@@ -318,6 +318,9 @@ class StatusConditionManager:
             VolatileStatus.CONFUSION.value: "became confused!",
             VolatileStatus.LEECH_SEED.value: "was seeded!",
             VolatileStatus.FLINCH.value: "flinched!",
+            VolatileStatus.PROTECT.value: "protected itself!",
+            VolatileStatus.DETECT.value: "protected itself!",
+            VolatileStatus.ENDURE.value: "is preparing to endure!",
         }
         return messages.get(status_type, f"was affected by {status_type}!")
     
