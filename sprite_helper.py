@@ -10,7 +10,7 @@ class PokemonSpriteHelper:
     """Helper class to get Pokemon sprite URLs"""
     
     # Sprite sources
-    SHOWDOWN_ANIMATED = "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/versions/generation-v/black-white/animated/{id}.gif"
+    SHOWDOWN_ANIMATED = "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/showdown/{id}.gif"
     SHOWDOWN_STATIC = "https://play.pokemonshowdown.com/sprites/pokemon/{name}.png"
     POKEAPI_FRONT = "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/{id}.png"
     POKEAPI_SHINY = "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/shiny/{id}.png"
@@ -33,7 +33,7 @@ class PokemonSpriteHelper:
         
         Examples:
             >>> PokemonSpriteHelper.get_sprite("pikachu", 25)
-            'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/versions/generation-v/black-white/animated/25.gif'
+            'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/showdown/25.gif'
 
             >>> PokemonSpriteHelper.get_sprite("charizard", 6, style='official')
             'https://assets.pokemon.com/assets/cms2/img/pokedex/full/006.png'
