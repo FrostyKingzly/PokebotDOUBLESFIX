@@ -12,6 +12,7 @@ from typing import Optional
 
 from battle_engine_v2 import BattleType
 from models import Pokemon
+from sprite_helper import PokemonSpriteHelper
 
 
 class WildCog(commands.Cog):
@@ -116,7 +117,15 @@ class WildCog(commands.Cog):
             description=f"**{pokemon.species_name}** was caught!",
             color=discord.Color.gold()
         )
-        
+
+        # Add sprite
+        sprite_url = PokemonSpriteHelper.get_sprite(
+            pokemon.species_name,
+            pokemon.species_dex_number,
+            style='animated'
+        )
+        embed.set_thumbnail(url=sprite_url)
+
         embed.add_field(
             name="Level",
             value=pokemon.level,

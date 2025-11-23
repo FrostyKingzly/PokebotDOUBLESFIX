@@ -7,6 +7,7 @@ from typing import List, Dict, Optional
 from models import Trainer
 from exp_display_helpers import create_exp_text
 from rank_manager import get_rank_tier_definition
+from sprite_helper import PokemonSpriteHelper
 
 class EmbedBuilder:
     """Builds Discord embeds for the bot"""
@@ -401,7 +402,15 @@ class EmbedBuilder:
             description=f"**{species_data['name']}** • Lv. {pokemon['level']}",
             color=color
         )
-        
+
+        # Add Pokemon sprite
+        sprite_url = PokemonSpriteHelper.get_sprite(
+            species_data['name'],
+            pokemon['species_dex_number'],
+            style='animated'
+        )
+        embed.set_thumbnail(url=sprite_url)
+
         # Basic Info
         # Use server emoji for types via server custom icons
         type_list = species_data.get("types", [])
