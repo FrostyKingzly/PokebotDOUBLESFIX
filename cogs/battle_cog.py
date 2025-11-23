@@ -7,6 +7,7 @@ from battle_engine_v2 import BattleEngine, BattleType, BattleAction, BattleForma
 from battle_exp_integration import BattleExpHandler
 from capture import simulate_throw, guaranteed_capture
 from learnset_database import LearnsetDatabase
+from sprite_helper import PokemonSpriteHelper
 # Emoji placeholders (fallbacks if ui.emoji is missing)
 try:
     from ui.emoji import SWORD, FIELD, EVENTS, YOU, FOE, TYPE_EMOJIS
@@ -93,6 +94,14 @@ class BattleCog(commands.Cog):
             color=discord.Color.gold()
         )
 
+        # Add sprite
+        sprite_url = PokemonSpriteHelper.get_sprite(
+            opponent_mon.species_name,
+            opponent_mon.species_dex_number,
+            style='animated'
+        )
+        embed.set_thumbnail(url=sprite_url)
+
         view = DazedCatchView(self, battle.battle_id)
         await interaction.followup.send(embed=embed, view=view)
 
@@ -167,6 +176,15 @@ class BattleCog(commands.Cog):
                 description=f"You used **{item_data.get('name', item_id)}**.\n{location_text}",
                 color=discord.Color.green()
             )
+
+            # Add sprite
+            sprite_url = PokemonSpriteHelper.get_sprite(
+                wild_mon.species_name,
+                wild_mon.species_dex_number,
+                style='animated'
+            )
+            embed.set_thumbnail(url=sprite_url)
+
             await send_msg(embed=embed)
             await self.send_return_to_encounter_prompt(interaction, interaction.user.id)
             return
@@ -177,6 +195,15 @@ class BattleCog(commands.Cog):
                 description=msg,
                 color=discord.Color.orange()
             )
+
+            # Add sprite
+            sprite_url = PokemonSpriteHelper.get_sprite(
+                wild_mon.species_name,
+                wild_mon.species_dex_number,
+                style='animated'
+            )
+            embed.set_thumbnail(url=sprite_url)
+
             await send_msg(embed=embed)
             # Note: throwing a ball consumes the turn externally; the turn resolution
             # for the wild Pokémon will still happen via the normal battle engine.
@@ -261,6 +288,16 @@ class BattleCog(commands.Cog):
             description=enc_description,
             color=discord.Color.blue()
         )
+
+        # Add sprite for wild encounters
+        if battle_mode == BattleType.WILD and opponent_active:
+            sprite_url = PokemonSpriteHelper.get_sprite(
+                opponent_active[0].species_name,
+                opponent_active[0].species_dex_number,
+                style='animated'
+            )
+            enc.set_thumbnail(url=sprite_url)
+
         enc.set_footer(text=f"Build: {BUILD_TAG}")
         await interaction.followup.send(embed=enc)
 
@@ -312,6 +349,15 @@ class BattleCog(commands.Cog):
             color=discord.Color.blurple()
         )
 
+        # Add sprite of player's first Pokemon
+        if trainer_active:
+            sprite_url = PokemonSpriteHelper.get_sprite(
+                trainer_active[0].species_name,
+                trainer_active[0].species_dex_number,
+                style='animated'
+            )
+            send_embed.set_thumbnail(url=sprite_url)
+
         fields = []
         if getattr(battle, "weather", None):
             wt = getattr(battle, "weather_turns", None)
@@ -356,6 +402,15 @@ class BattleCog(commands.Cog):
             description=f"**Turn {battle.turn_number}**",
             color=discord.Color.dark_grey()
         )
+
+        # Add sprite of opponent's first Pokemon
+        if opponent_active:
+            sprite_url = PokemonSpriteHelper.get_sprite(
+                opponent_active[0].species_name,
+                opponent_active[0].species_dex_number,
+                style='animated'
+            )
+            e.set_thumbnail(url=sprite_url)
 
         # Show all active opponent Pokemon
         for idx, opp_mon in enumerate(opponent_active):
