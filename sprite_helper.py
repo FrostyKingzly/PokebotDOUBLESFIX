@@ -10,7 +10,8 @@ class PokemonSpriteHelper:
     """Helper class to get Pokemon sprite URLs"""
     
     # Sprite sources
-    SHOWDOWN_ANIMATED = "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/showdown/{id}.gif"
+    GEN5_ANIMATED = "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/versions/generation-v/black-white/animated/{id}.gif"
+    SHOWDOWN_ANIMATED_FALLBACK = "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/showdown/{id}.gif"
     SHOWDOWN_STATIC = "https://play.pokemonshowdown.com/sprites/pokemon/{name}.png"
     POKEAPI_FRONT = "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/{id}.png"
     POKEAPI_SHINY = "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/shiny/{id}.png"
@@ -33,7 +34,10 @@ class PokemonSpriteHelper:
         
         Examples:
             >>> PokemonSpriteHelper.get_sprite("pikachu", 25)
-            'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/showdown/25.gif'
+            'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/versions/generation-v/black-white/animated/25.gif'
+
+            >>> PokemonSpriteHelper.get_sprite("rillaboom", 812)
+            'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/showdown/812.gif'
 
             >>> PokemonSpriteHelper.get_sprite("charizard", 6, style='official')
             'https://assets.pokemon.com/assets/cms2/img/pokedex/full/006.png'
@@ -43,7 +47,12 @@ class PokemonSpriteHelper:
         if style == 'animated':
             if dex_number is None:
                 raise ValueError("dex_number required for animated sprites")
-            return PokemonSpriteHelper.SHOWDOWN_ANIMATED.format(id=dex_number)
+            # Use Gen 5 sprites for Gen 1-5 Pokémon (dex #1-649)
+            # Fall back to Showdown 3D sprites for Gen 6+ Pokémon
+            if dex_number <= 649:
+                return PokemonSpriteHelper.GEN5_ANIMATED.format(id=dex_number)
+            else:
+                return PokemonSpriteHelper.SHOWDOWN_ANIMATED_FALLBACK.format(id=dex_number)
 
         elif style == 'showdown':
             return PokemonSpriteHelper.SHOWDOWN_STATIC.format(name=name)
