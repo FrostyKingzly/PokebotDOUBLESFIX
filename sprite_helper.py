@@ -10,7 +10,7 @@ class PokemonSpriteHelper:
     """Helper class to get Pokemon sprite URLs"""
     
     # Sprite sources
-    SHOWDOWN_ANIMATED = "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/showdown/{id}.gif"
+    GEN5_ANIMATED = "https://play.pokemonshowdown.com/sprites/gen5ani/{name}.gif"
     SHOWDOWN_STATIC = "https://play.pokemonshowdown.com/sprites/pokemon/{name}.png"
     POKEAPI_FRONT = "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/{id}.png"
     POKEAPI_SHINY = "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/shiny/{id}.png"
@@ -24,7 +24,7 @@ class PokemonSpriteHelper:
         
         Args:
             pokemon_name: Pokemon species name (e.g., "pikachu", "charizard")
-            dex_number: National Dex number (optional, for some sources)
+            dex_number: National Dex number (required for 'static' and 'official' styles)
             style: 'animated', 'static', 'official', 'showdown'
             shiny: Whether to get shiny sprite (only works for 'static')
         
@@ -33,7 +33,10 @@ class PokemonSpriteHelper:
         
         Examples:
             >>> PokemonSpriteHelper.get_sprite("pikachu", 25)
-            'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/showdown/25.gif'
+            'https://play.pokemonshowdown.com/sprites/gen5ani/pikachu.gif'
+
+            >>> PokemonSpriteHelper.get_sprite("rillaboom", 812)
+            'https://play.pokemonshowdown.com/sprites/gen5ani/rillaboom.gif'
 
             >>> PokemonSpriteHelper.get_sprite("charizard", 6, style='official')
             'https://assets.pokemon.com/assets/cms2/img/pokedex/full/006.png'
@@ -41,9 +44,8 @@ class PokemonSpriteHelper:
         name = pokemon_name.lower().replace(' ', '').replace('-', '')
 
         if style == 'animated':
-            if dex_number is None:
-                raise ValueError("dex_number required for animated sprites")
-            return PokemonSpriteHelper.SHOWDOWN_ANIMATED.format(id=dex_number)
+            # Use Showdown Gen 5 animated sprites for all Pokémon
+            return PokemonSpriteHelper.GEN5_ANIMATED.format(name=name)
 
         elif style == 'showdown':
             return PokemonSpriteHelper.SHOWDOWN_STATIC.format(name=name)
