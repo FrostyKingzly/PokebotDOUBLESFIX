@@ -10,7 +10,7 @@ class PokemonSpriteHelper:
     """Helper class to get Pokemon sprite URLs"""
     
     # Sprite sources
-    SHOWDOWN_ANIMATED = "https://play.pokemonshowdown.com/sprites/gen5/{name}.png"
+    SHOWDOWN_ANIMATED = "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/versions/generation-v/black-white/animated/{id}.gif"
     SHOWDOWN_STATIC = "https://play.pokemonshowdown.com/sprites/pokemon/{name}.png"
     POKEAPI_FRONT = "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/{id}.png"
     POKEAPI_SHINY = "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/shiny/{id}.png"
@@ -33,16 +33,18 @@ class PokemonSpriteHelper:
         
         Examples:
             >>> PokemonSpriteHelper.get_sprite("pikachu", 25)
-            'https://play.pokemonshowdown.com/sprites/gen5/pikachu.png'
-            
+            'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/versions/generation-v/black-white/animated/25.gif'
+
             >>> PokemonSpriteHelper.get_sprite("charizard", 6, style='official')
             'https://assets.pokemon.com/assets/cms2/img/pokedex/full/006.png'
         """
         name = pokemon_name.lower().replace(' ', '').replace('-', '')
-        
+
         if style == 'animated':
-            return PokemonSpriteHelper.SHOWDOWN_ANIMATED.format(name=name)
-        
+            if dex_number is None:
+                raise ValueError("dex_number required for animated sprites")
+            return PokemonSpriteHelper.SHOWDOWN_ANIMATED.format(id=dex_number)
+
         elif style == 'showdown':
             return PokemonSpriteHelper.SHOWDOWN_STATIC.format(name=name)
         
