@@ -1278,12 +1278,13 @@ class BattleEngine:
                         break
 
                 # For player's Pokemon fainting (non‑AI), they need to switch (if they have Pokemon left)
-                if defender_battler == battle.trainer and not defender_battler.is_ai:
+                # In PVP, both trainer and opponent can be human players
+                if not defender_battler.is_ai:
                     if defender_battler.has_usable_pokemon():
                         # Count usable Pokemon (excluding the fainted one)
                         usable_count = sum(1 for p in defender_battler.party if p.current_hp > 0 and p != defender)
                         if usable_count > 0:
-                            
+
                             battle.phase = 'FORCED_SWITCH'
                             battle.forced_switch_battler_id = defender_battler.battler_id
                             battle.forced_switch_position = fainted_position
@@ -1599,9 +1600,28 @@ class BattleEngine:
         action = BattleAction(action_type='switch', battler_id=battler_id, switch_to_position=switch_to_position)
         result = self._execute_switch(battle, action, forced=True)
 
-        battle.phase = 'WAITING_ACTIONS'
-        battle.forced_switch_battler_id = None
-        battle.forced_switch_position = None
+        # After this player switches, check if the other player also has fainted Pokemon
+        other_battler = battle.opponent if battler == battle.trainer else battle.trainer
+        other_needs_switch = False
+
+        # Only check for human players (not AI)
+        if not getattr(other_battler, 'is_ai', False):
+            active_pokemon = other_battler.get_active_pokemon()
+            for pos_idx, active_mon in enumerate(active_pokemon):
+                if getattr(active_mon, 'current_hp', 0) <= 0:
+                    # Other player has a fainted Pokemon that needs switching
+                    other_needs_switch = True
+                    battle.phase = 'FORCED_SWITCH'
+                    battle.forced_switch_battler_id = other_battler.battler_id
+                    battle.forced_switch_position = pos_idx
+                    break
+
+        # Only reset to WAITING_ACTIONS if the other player doesn't need to switch
+        if not other_needs_switch:
+            battle.phase = 'WAITING_ACTIONS'
+            battle.forced_switch_battler_id = None
+            battle.forced_switch_position = None
+
         battle.pending_ai_switch_index = None
         battle.pending_actions.pop(str(battler_id), None)
 
