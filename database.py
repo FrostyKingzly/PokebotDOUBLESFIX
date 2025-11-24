@@ -372,6 +372,91 @@ class PlayerDatabase:
                 FOREIGN KEY (discord_user_id) REFERENCES trainers(discord_user_id)
             )
         """)
+
+        # Wild Areas system
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS wild_areas (
+                area_id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS wild_area_zones (
+                zone_id TEXT PRIMARY KEY,
+                area_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                description TEXT,
+                has_pokemon_station INTEGER DEFAULT 0,
+                zone_travel_cost INTEGER DEFAULT 5,
+                encounters TEXT,
+                npc_trainers TEXT,
+                FOREIGN KEY (area_id) REFERENCES wild_areas(area_id)
+            )
+        """)
+
+        # Party/Team system
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS parties (
+                party_id TEXT PRIMARY KEY,
+                party_name TEXT NOT NULL,
+                leader_discord_id INTEGER NOT NULL,
+                area_id TEXT NOT NULL,
+                current_zone_id TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (leader_discord_id) REFERENCES trainers(discord_user_id),
+                FOREIGN KEY (area_id) REFERENCES wild_areas(area_id),
+                FOREIGN KEY (current_zone_id) REFERENCES wild_area_zones(zone_id)
+            )
+        """)
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS party_members (
+                party_id TEXT,
+                discord_user_id INTEGER,
+                joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (party_id, discord_user_id),
+                FOREIGN KEY (party_id) REFERENCES parties(party_id),
+                FOREIGN KEY (discord_user_id) REFERENCES trainers(discord_user_id)
+            )
+        """)
+
+        # Trainer wild area state tracking
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS trainer_wild_area_states (
+                discord_user_id INTEGER PRIMARY KEY,
+                area_id TEXT NOT NULL,
+                current_zone_id TEXT NOT NULL,
+                entry_stamina INTEGER NOT NULL,
+                current_stamina INTEGER NOT NULL,
+                snapshot_money INTEGER NOT NULL,
+                snapshot_inventory TEXT NOT NULL,
+                snapshot_pokemon_exp TEXT NOT NULL,
+                entered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (discord_user_id) REFERENCES trainers(discord_user_id),
+                FOREIGN KEY (area_id) REFERENCES wild_areas(area_id),
+                FOREIGN KEY (current_zone_id) REFERENCES wild_area_zones(zone_id)
+            )
+        """)
+
+        # Static encounters
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS static_encounters (
+                encounter_id TEXT PRIMARY KEY,
+                zone_id TEXT NOT NULL,
+                encounter_type TEXT NOT NULL,
+                target_player_id INTEGER,
+                pokemon_data TEXT,
+                trainer_data TEXT,
+                battle_format TEXT,
+                is_active INTEGER DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (zone_id) REFERENCES wild_area_zones(zone_id),
+                FOREIGN KEY (target_player_id) REFERENCES trainers(discord_user_id)
+            )
+        """)
         
         conn.commit()
         conn.close()

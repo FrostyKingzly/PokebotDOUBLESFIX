@@ -1074,3 +1074,109 @@ class EmbedBuilder:
         
         embed.set_footer(text="Select a trainer from the dropdown below!")
         return embed
+
+    @staticmethod
+    def party_menu(wild_area_state: Dict, available_parties: List[Dict]) -> discord.Embed:
+        """Create party creation/join menu embed"""
+        embed = discord.Embed(
+            title="🤝 Team Up",
+            description="Create a new team or join an existing one!",
+            color=EmbedBuilder.SUCCESS_COLOR
+        )
+
+        embed.add_field(
+            name="📍 Current Zone",
+            value=wild_area_state['current_zone_id'],
+            inline=False
+        )
+
+        embed.add_field(
+            name="⚡ Stamina",
+            value=f"{wild_area_state['current_stamina']}/{wild_area_state['entry_stamina']}",
+            inline=True
+        )
+
+        if available_parties:
+            parties_text = "\n".join([
+                f"**{p['party_name']}** (Leader: <@{p['leader_discord_id']}>)"
+                for p in available_parties
+            ])
+            embed.add_field(
+                name=f"Available Teams ({len(available_parties)})",
+                value=parties_text,
+                inline=False
+            )
+        else:
+            embed.add_field(
+                name="Available Teams",
+                value="No teams in this area. Create one!",
+                inline=False
+            )
+
+        return embed
+
+    @staticmethod
+    def party_info(party: Dict, member_ids: List[int], player_manager) -> discord.Embed:
+        """Create party info embed"""
+        embed = discord.Embed(
+            title=f"🤝 {party['party_name']}",
+            description=f"Leader: <@{party['leader_discord_id']}>",
+            color=EmbedBuilder.SUCCESS_COLOR
+        )
+
+        embed.add_field(
+            name="📍 Current Zone",
+            value=party['current_zone_id'],
+            inline=True
+        )
+
+        embed.add_field(
+            name="👥 Members",
+            value=f"{len(member_ids)} trainers",
+            inline=True
+        )
+
+        # List members
+        members_text = []
+        for member_id in member_ids:
+            trainer = player_manager.get_player(member_id)
+            name = trainer.trainer_name if trainer else f"User {member_id}"
+            members_text.append(f"• {name}")
+
+        embed.add_field(
+            name="Team Roster",
+            value="\n".join(members_text) if members_text else "No members",
+            inline=False
+        )
+
+        return embed
+
+    @staticmethod
+    def wild_area_info(area: Dict, zone: Dict, stamina: int, max_stamina: int) -> discord.Embed:
+        """Create wild area info embed"""
+        embed = discord.Embed(
+            title=f"🗺️ {area['name']}",
+            description=area.get('description', 'A mysterious wild area...'),
+            color=EmbedBuilder.INFO_COLOR
+        )
+
+        embed.add_field(
+            name="📍 Current Zone",
+            value=f"**{zone['name']}**\n{zone.get('description', '')}",
+            inline=False
+        )
+
+        embed.add_field(
+            name="⚡ Stamina",
+            value=f"{stamina}/{max_stamina}",
+            inline=True
+        )
+
+        if zone.get('has_pokemon_station'):
+            embed.add_field(
+                name="🏥 Station",
+                value="Pokémon Station available!",
+                inline=True
+            )
+
+        return embed
