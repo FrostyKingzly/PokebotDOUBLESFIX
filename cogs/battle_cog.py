@@ -276,6 +276,16 @@ class BattleCog(commands.Cog):
         if battle_mode == BattleType.WILD:
             enc_title = f"{SWORD} Encounter!"
             enc_description = f"You encountered a wild **{opponent_active[0].species_name}**!"
+        elif battle.battle_format == BattleFormat.MULTI:
+            enc_title = f"{SWORD} Multi Battle Start!"
+            # Show team composition
+            team1_names = f"**{battle.trainer.battler_name}**"
+            if battle.trainer_partner:
+                team1_names += f" & **{battle.trainer_partner.battler_name}**"
+            team2_names = f"**{battle.opponent.battler_name}**"
+            if battle.opponent_partner:
+                team2_names += f" & **{battle.opponent_partner.battler_name}**"
+            enc_description = f"{team1_names} challenge {team2_names} to a multi battle!"
         else:
             enc_title = f"{SWORD} Battle Start!"
             enc_description = (
@@ -327,6 +337,29 @@ class BattleCog(commands.Cog):
 
             await interaction.followup.send(embed=send_embed)
 
+        # For multi battles, also send out partner's Pokemon
+        if battle.battle_format == BattleFormat.MULTI and battle.trainer_partner:
+            partner_active = battle.trainer_partner.get_active_pokemon()
+            for idx, mon in enumerate(partner_active):
+                position_text = f" (Slot {idx+1})" if len(partner_active) > 1 else ""
+                description = f"**{battle.trainer_partner.battler_name}** sent out **{mon.species_name}**{position_text}!"
+
+                send_embed = discord.Embed(
+                    title="Send-out",
+                    description=description,
+                    color=discord.Color.blurple()
+                )
+
+                # Add sprite
+                sprite_url = PokemonSpriteHelper.get_sprite(
+                    mon.species_name,
+                    mon.species_dex_number,
+                    style='animated'
+                )
+                send_embed.set_thumbnail(url=sprite_url)
+
+                await interaction.followup.send(embed=send_embed)
+
         # For trainer battles, also send out opponent's Pokemon (one embed per Pokemon)
         if battle_mode != BattleType.WILD:
             for idx, mon in enumerate(opponent_active):
@@ -348,6 +381,29 @@ class BattleCog(commands.Cog):
                 send_embed.set_thumbnail(url=sprite_url)
 
                 await interaction.followup.send(embed=send_embed)
+
+            # For multi battles, also send out opponent partner's Pokemon
+            if battle.battle_format == BattleFormat.MULTI and battle.opponent_partner:
+                partner_active = battle.opponent_partner.get_active_pokemon()
+                for idx, mon in enumerate(partner_active):
+                    position_text = f" (Slot {idx+1})" if len(partner_active) > 1 else ""
+                    description = f"**{battle.opponent_partner.battler_name}** sent out **{mon.species_name}**{position_text}!"
+
+                    send_embed = discord.Embed(
+                        title="Send-out",
+                        description=description,
+                        color=discord.Color.blurple()
+                    )
+
+                    # Add sprite
+                    sprite_url = PokemonSpriteHelper.get_sprite(
+                        mon.species_name,
+                        mon.species_dex_number,
+                        style='animated'
+                    )
+                    send_embed.set_thumbnail(url=sprite_url)
+
+                    await interaction.followup.send(embed=send_embed)
 
         # If there are entry messages or field effects, send them in a final embed
         if entry_messages or getattr(battle, "weather", None) or getattr(battle, "terrain", None):
@@ -398,38 +454,93 @@ class BattleCog(commands.Cog):
         opponent_active = battle.opponent.get_active_pokemon()
 
         is_doubles = battle.battle_format == BattleFormat.DOUBLES
+        is_multi = battle.battle_format == BattleFormat.MULTI
+
+        # Determine title
+        if is_multi:
+            title = f"{SWORD} Multi Battle"
+        elif is_doubles:
+            title = f"{SWORD} Doubles Battle"
+        else:
+            title = f"{SWORD} Battle"
 
         e = discord.Embed(
-            title=f"{SWORD} {'Doubles ' if is_doubles else ''}Battle",
+            title=title,
             description=f"**Turn {battle.turn_number}**",
             color=discord.Color.dark_grey()
         )
 
-        # Show all active opponent Pokemon
-        for idx, opp_mon in enumerate(opponent_active):
-            opp_value = f"HP: {self._hp_bar(opp_mon)} ({max(0, opp_mon.current_hp)}/{opp_mon.max_hp})"
+        # For multi battles, show both opponents
+        if is_multi:
+            # Show opponent team leader's Pokemon
+            for idx, opp_mon in enumerate(opponent_active):
+                opp_value = f"HP: {self._hp_bar(opp_mon)} ({max(0, opp_mon.current_hp)}/{opp_mon.max_hp})"
+                e.add_field(
+                    name=f"{FOE} {battle.opponent.battler_name}'s {opp_mon.species_name}",
+                    value=opp_value,
+                    inline=True
+                )
 
-            position_label = f" (Slot {idx+1})" if is_doubles else ""
-            e.add_field(
-                name=f"{FOE} {opp_mon.species_name}{position_label}",
-                value=opp_value,
-                inline=is_doubles
-            )
+            # Show opponent partner's Pokemon
+            if battle.opponent_partner:
+                partner_active = battle.opponent_partner.get_active_pokemon()
+                for idx, partner_mon in enumerate(partner_active):
+                    partner_value = f"HP: {self._hp_bar(partner_mon)} ({max(0, partner_mon.current_hp)}/{partner_mon.max_hp})"
+                    e.add_field(
+                        name=f"{FOE} {battle.opponent_partner.battler_name}'s {partner_mon.species_name}",
+                        value=partner_value,
+                        inline=True
+                    )
 
-        # Add blank separator for doubles to force player Pokemon to new row
-        if is_doubles and len(opponent_active) > 0:
+            # Add separator
             e.add_field(name="\u200b", value="\u200b", inline=False)
 
-        # Show all active trainer Pokemon
-        for idx, trainer_mon in enumerate(trainer_active):
-            trainer_value = f"HP: {self._hp_bar(trainer_mon)} ({max(0, trainer_mon.current_hp)}/{trainer_mon.max_hp})"
+            # Show player team leader's Pokemon
+            for idx, trainer_mon in enumerate(trainer_active):
+                trainer_value = f"HP: {self._hp_bar(trainer_mon)} ({max(0, trainer_mon.current_hp)}/{trainer_mon.max_hp})"
+                e.add_field(
+                    name=f"{YOU} {battle.trainer.battler_name}'s {trainer_mon.species_name}",
+                    value=trainer_value,
+                    inline=True
+                )
 
-            position_label = f" (Slot {idx+1})" if is_doubles else ""
-            e.add_field(
-                name=f"{YOU} {trainer_mon.species_name}{position_label}",
-                value=trainer_value,
-                inline=is_doubles
-            )
+            # Show player partner's Pokemon
+            if battle.trainer_partner:
+                partner_active = battle.trainer_partner.get_active_pokemon()
+                for idx, partner_mon in enumerate(partner_active):
+                    partner_value = f"HP: {self._hp_bar(partner_mon)} ({max(0, partner_mon.current_hp)}/{partner_mon.max_hp})"
+                    e.add_field(
+                        name=f"{YOU} {battle.trainer_partner.battler_name}'s {partner_mon.species_name}",
+                        value=partner_value,
+                        inline=True
+                    )
+        else:
+            # Standard singles/doubles display
+            # Show all active opponent Pokemon
+            for idx, opp_mon in enumerate(opponent_active):
+                opp_value = f"HP: {self._hp_bar(opp_mon)} ({max(0, opp_mon.current_hp)}/{opp_mon.max_hp})"
+
+                position_label = f" (Slot {idx+1})" if is_doubles else ""
+                e.add_field(
+                    name=f"{FOE} {opp_mon.species_name}{position_label}",
+                    value=opp_value,
+                    inline=is_doubles
+                )
+
+            # Add blank separator for doubles to force player Pokemon to new row
+            if is_doubles and len(opponent_active) > 0:
+                e.add_field(name="\u200b", value="\u200b", inline=False)
+
+            # Show all active trainer Pokemon
+            for idx, trainer_mon in enumerate(trainer_active):
+                trainer_value = f"HP: {self._hp_bar(trainer_mon)} ({max(0, trainer_mon.current_hp)}/{trainer_mon.max_hp})"
+
+                position_label = f" (Slot {idx+1})" if is_doubles else ""
+                e.add_field(
+                    name=f"{YOU} {trainer_mon.species_name}{position_label}",
+                    value=trainer_value,
+                    inline=is_doubles
+                )
         if getattr(battle, "recent_events", None):
             e.add_field(name=f"{EVENTS} Recent Events", value="\n".join(battle.recent_events[-5:]), inline=False)
         if getattr(battle, "weather", None) or getattr(battle, "terrain", None):
