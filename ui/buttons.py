@@ -2593,34 +2593,48 @@ class MultiPartnerSelectView(View):
             )
             return
 
-        # Send partner invitation
+        if not interaction.channel:
+            await interaction.response.send_message(
+                "❌ This channel is unavailable for sending the invitation.",
+                ephemeral=True
+            )
+            return
+
+        await interaction.response.defer(ephemeral=True)
+
+        # Send partner invitation in the channel
         invite_view = MultiPartnerInviteView(
             bot=self.bot,
             initiator=self.initiator,
             partner=partner,
             npc_data=self.npc_data,
             location=self.location,
-            ranked=self.ranked
+            ranked=self.ranked,
+            channel=interaction.channel
         )
 
-        # Send invitation to partner
-        try:
-            await partner.send(
-                f"🤝 **Multi Battle Invitation!**\n"
-                f"{self.initiator.display_name} has invited you to team up for a multi battle against "
-                f"**{self.npc_data.get('name')}** and their partner in **{self.location.get('name')}**!\n\n"
-                f"Do you accept?",
-                view=invite_view
-            )
-            await interaction.response.send_message(
-                f"✅ Invitation sent to {partner.display_name}! Waiting for their response...",
-                ephemeral=True
-            )
-        except discord.Forbidden:
-            await interaction.response.send_message(
-                f"❌ Could not send invitation to {partner.display_name}. They may have DMs disabled.",
-                ephemeral=True
-            )
+        embed = discord.Embed(
+            title="🤝 Multi Battle Invitation!",
+            description=(
+                f"{self.initiator.mention} has invited {partner.mention} to team up for a multi battle!\n\n"
+                f"**Opponents:** {self.npc_data.get('name')} & Partner\n"
+                f"**Location:** {self.location.get('name')}"
+            ),
+            color=discord.Color.blue()
+        )
+        embed.set_footer(text="Only the invited partner can accept or decline.")
+
+        message = await interaction.channel.send(
+            content=f"{partner.mention}, {self.initiator.mention} wants to team up!",
+            embed=embed,
+            view=invite_view
+        )
+        invite_view.message = message
+
+        await interaction.followup.send(
+            f"✅ Invitation sent to {partner.display_name}! Waiting for their response...",
+            ephemeral=True
+        )
 
         self.stop()
 
@@ -2629,14 +2643,26 @@ class MultiPartnerInviteView(View):
     """Accept/decline multi battle partner invitation"""
 
     def __init__(self, bot, initiator: discord.Member, partner: discord.Member,
-                 npc_data: dict, location: dict, ranked: bool = False):
-        super().__init__(timeout=300)
+                 npc_data: dict, location: dict, ranked: bool = False, channel=None):
+        super().__init__(timeout=120)
         self.bot = bot
         self.initiator = initiator
         self.partner = partner
         self.npc_data = npc_data
         self.location = location
         self.ranked = ranked
+        self.channel = channel
+        self.message = None
+
+    async def _finalize(self, content: str):
+        """Update the invitation message and disable buttons"""
+        if self.message:
+            for item in self.children:
+                item.disabled = True
+            try:
+                await self.message.edit(content=content, embed=None, view=self)
+            except:
+                pass
 
     @discord.ui.button(label="Accept", style=discord.ButtonStyle.success, emoji="✅")
     async def accept_button(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -2656,6 +2682,7 @@ class MultiPartnerInviteView(View):
                 f"❌ {self.initiator.display_name} is now in another battle!",
                 ephemeral=True
             )
+            await self._finalize(f"❌ Multi battle cancelled - {self.initiator.display_name} is in another battle.")
             self.stop()
             return
 
@@ -2664,6 +2691,7 @@ class MultiPartnerInviteView(View):
                 "❌ You are now in another battle!",
                 ephemeral=True
             )
+            await self._finalize(f"❌ Multi battle cancelled - {self.partner.display_name} is in another battle.")
             self.stop()
             return
 
@@ -2693,6 +2721,7 @@ class MultiPartnerInviteView(View):
                 f"({self.initiator.display_name}: {initiator_healthy}, {self.partner.display_name}: {partner_healthy})",
                 ephemeral=True
             )
+            await self._finalize(f"❌ Multi battle cancelled - not enough healthy Pokémon.")
             self.stop()
             return
 
@@ -2741,24 +2770,14 @@ class MultiPartnerInviteView(View):
         battle_cog.user_battles[self.initiator.id] = battle_id
         battle_cog.user_battles[self.partner.id] = battle_id
 
-        # Notify initiator
-        try:
-            await self.initiator.send(
-                f"✅ {self.partner.display_name} accepted! Multi battle starting..."
-            )
-        except:
-            pass
+        # Update invitation message
+        await self._finalize(f"✅ {self.partner.mention} accepted! Multi battle starting...")
 
-        # Start battle UI for partner
+        # Start battle UI in the channel
         await battle_cog.start_battle_ui(
             interaction=interaction,
             battle_id=battle_id,
             battle_type=BattleType.TRAINER
-        )
-
-        await interaction.followup.send(
-            "✅ Multi battle started! Good luck!",
-            ephemeral=True
         )
 
         self.stop()
@@ -2772,13 +2791,8 @@ class MultiPartnerInviteView(View):
 
         await interaction.response.send_message("❌ Multi battle invitation declined.", ephemeral=True)
 
-        # Notify initiator
-        try:
-            await self.initiator.send(
-                f"❌ {self.partner.display_name} declined your multi battle invitation."
-            )
-        except:
-            pass
+        # Update invitation message
+        await self._finalize(f"❌ {self.partner.mention} declined the multi battle invitation.")
 
         self.stop()
 
