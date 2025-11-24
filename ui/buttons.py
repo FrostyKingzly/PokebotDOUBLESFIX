@@ -2544,6 +2544,283 @@ class PvPChallengeResponseView(View):
         self.stop()
 
 
+class MultiPartnerSelectView(View):
+    """Select a partner for a multi battle"""
+
+    def __init__(self, bot, initiator: discord.Member, npc_data: dict, location: dict, ranked: bool = False):
+        super().__init__(timeout=300)
+        self.bot = bot
+        self.initiator = initiator
+        self.npc_data = npc_data
+        self.location = location
+        self.ranked = ranked
+
+        # Add user select menu for partner
+        user_select = discord.ui.UserSelect(
+            placeholder="Choose a partner trainer...",
+            min_values=1,
+            max_values=1,
+            custom_id="multi_partner_select"
+        )
+        user_select.callback = self.partner_callback
+        self.add_item(user_select)
+
+    async def partner_callback(self, interaction: discord.Interaction):
+        """Handle partner selection"""
+        if interaction.user.id != self.initiator.id:
+            await interaction.response.send_message("❌ Only the initiator can select a partner!", ephemeral=True)
+            return
+
+        selected_partner = interaction.data['values'][0]
+        partner_id = int(selected_partner)
+        partner = interaction.guild.get_member(partner_id)
+
+        if not partner:
+            await interaction.response.send_message("❌ Partner not found!", ephemeral=True)
+            return
+
+        # Can't partner with yourself
+        if partner.id == self.initiator.id:
+            await interaction.response.send_message("❌ You can't partner with yourself!", ephemeral=True)
+            return
+
+        # Check if partner is already in a battle
+        battle_cog = self.bot.get_cog('BattleCog')
+        if partner.id in battle_cog.user_battles:
+            await interaction.response.send_message(
+                f"❌ {partner.display_name} is already in a battle!",
+                ephemeral=True
+            )
+            return
+
+        # Send partner invitation
+        invite_view = MultiPartnerInviteView(
+            bot=self.bot,
+            initiator=self.initiator,
+            partner=partner,
+            npc_data=self.npc_data,
+            location=self.location,
+            ranked=self.ranked
+        )
+
+        # Send invitation to partner
+        try:
+            await partner.send(
+                f"🤝 **Multi Battle Invitation!**\n"
+                f"{self.initiator.display_name} has invited you to team up for a multi battle against "
+                f"**{self.npc_data.get('name')}** and their partner in **{self.location.get('name')}**!\n\n"
+                f"Do you accept?",
+                view=invite_view
+            )
+            await interaction.response.send_message(
+                f"✅ Invitation sent to {partner.display_name}! Waiting for their response...",
+                ephemeral=True
+            )
+        except discord.Forbidden:
+            await interaction.response.send_message(
+                f"❌ Could not send invitation to {partner.display_name}. They may have DMs disabled.",
+                ephemeral=True
+            )
+
+        self.stop()
+
+
+class MultiPartnerInviteView(View):
+    """Accept/decline multi battle partner invitation"""
+
+    def __init__(self, bot, initiator: discord.Member, partner: discord.Member,
+                 npc_data: dict, location: dict, ranked: bool = False):
+        super().__init__(timeout=300)
+        self.bot = bot
+        self.initiator = initiator
+        self.partner = partner
+        self.npc_data = npc_data
+        self.location = location
+        self.ranked = ranked
+
+    @discord.ui.button(label="Accept", style=discord.ButtonStyle.success, emoji="✅")
+    async def accept_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Accept the multi battle invitation"""
+        if interaction.user.id != self.partner.id:
+            await interaction.response.send_message("❌ Only the invited partner can accept!", ephemeral=True)
+            return
+
+        await interaction.response.defer()
+
+        # Get both players' parties
+        battle_cog = self.bot.get_cog('BattleCog')
+
+        # Check if either player is now in a battle
+        if self.initiator.id in battle_cog.user_battles:
+            await interaction.followup.send(
+                f"❌ {self.initiator.display_name} is now in another battle!",
+                ephemeral=True
+            )
+            self.stop()
+            return
+
+        if self.partner.id in battle_cog.user_battles:
+            await interaction.followup.send(
+                "❌ You are now in another battle!",
+                ephemeral=True
+            )
+            self.stop()
+            return
+
+        # Get initiator's party
+        initiator_party_data = self.bot.player_manager.get_party(self.initiator.id)
+        initiator_pokemon = []
+        for poke_data in initiator_party_data:
+            species_data = self.bot.species_db.get_species(poke_data['species_dex_number'])
+            pokemon = reconstruct_pokemon_from_data(poke_data, species_data)
+            initiator_pokemon.append(pokemon)
+
+        # Get partner's party
+        partner_party_data = self.bot.player_manager.get_party(self.partner.id)
+        partner_pokemon = []
+        for poke_data in partner_party_data:
+            species_data = self.bot.species_db.get_species(poke_data['species_dex_number'])
+            pokemon = reconstruct_pokemon_from_data(poke_data, species_data)
+            partner_pokemon.append(pokemon)
+
+        # Check both have healthy Pokemon
+        initiator_healthy = sum(1 for p in initiator_pokemon if p.current_hp > 0)
+        partner_healthy = sum(1 for p in partner_pokemon if p.current_hp > 0)
+
+        if initiator_healthy < 1 or partner_healthy < 1:
+            await interaction.followup.send(
+                f"❌ Both trainers need at least 1 healthy Pokemon! "
+                f"({self.initiator.display_name}: {initiator_healthy}, {self.partner.display_name}: {partner_healthy})",
+                ephemeral=True
+            )
+            self.stop()
+            return
+
+        # Create NPC parties (split the NPC's party between 2 NPCs)
+        npc_full_party = []
+        for npc_poke in self.npc_data.get('party', []):
+            pokemon = self._create_npc_pokemon(npc_poke)
+            npc_full_party.append(pokemon)
+
+        # Split NPCs into two teams
+        mid_point = len(npc_full_party) // 2
+        npc1_party = npc_full_party[:mid_point] if mid_point > 0 else npc_full_party[:2]
+        npc2_party = npc_full_party[mid_point:] if mid_point > 0 else npc_full_party[2:]
+
+        # Ensure each NPC has at least 1 Pokemon
+        if not npc1_party:
+            npc1_party = [npc_full_party[0]]
+        if not npc2_party:
+            npc2_party = [npc_full_party[-1]]
+
+        from battle_engine_v2 import BattleType
+
+        # Start multi battle
+        battle_id = battle_cog.battle_engine.start_multi_battle(
+            trainer1_id=self.initiator.id,
+            trainer1_name=self.initiator.display_name,
+            trainer1_party=initiator_pokemon,
+            partner1_id=self.partner.id,
+            partner1_name=self.partner.display_name,
+            partner1_party=partner_pokemon,
+            partner1_is_ai=False,
+            trainer2_id=-10000,  # NPC 1
+            trainer2_name=self.npc_data.get('name', 'Trainer'),
+            trainer2_party=npc1_party,
+            partner2_id=-10001,  # NPC 2
+            partner2_name=self.npc_data.get('name', 'Trainer') + "'s Partner",
+            partner2_party=npc2_party,
+            partner2_is_ai=True,
+            is_ranked=self.ranked,
+            partner1_class=None,
+            partner2_class=self.npc_data.get('class'),
+            is_pve=True
+        )
+
+        # Register both players
+        battle_cog.user_battles[self.initiator.id] = battle_id
+        battle_cog.user_battles[self.partner.id] = battle_id
+
+        # Notify initiator
+        try:
+            await self.initiator.send(
+                f"✅ {self.partner.display_name} accepted! Multi battle starting..."
+            )
+        except:
+            pass
+
+        # Start battle UI for partner
+        await battle_cog.start_battle_ui(
+            interaction=interaction,
+            battle_id=battle_id,
+            battle_type=BattleType.TRAINER
+        )
+
+        await interaction.followup.send(
+            "✅ Multi battle started! Good luck!",
+            ephemeral=True
+        )
+
+        self.stop()
+
+    @discord.ui.button(label="Decline", style=discord.ButtonStyle.danger, emoji="❌")
+    async def decline_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Decline the multi battle invitation"""
+        if interaction.user.id != self.partner.id:
+            await interaction.response.send_message("❌ Only the invited partner can decline!", ephemeral=True)
+            return
+
+        await interaction.response.send_message("❌ Multi battle invitation declined.", ephemeral=True)
+
+        # Notify initiator
+        try:
+            await self.initiator.send(
+                f"❌ {self.partner.display_name} declined your multi battle invitation."
+            )
+        except:
+            pass
+
+        self.stop()
+
+    def _create_npc_pokemon(self, npc_poke_data: dict):
+        """Create a Pokemon object from NPC trainer data"""
+        from models import Pokemon
+        import random
+
+        # Get species data
+        species_dex_number = npc_poke_data.get('species_dex_number')
+        species_data = self.bot.species_db.get_species(species_dex_number)
+
+        # Get level
+        level = npc_poke_data.get('level', 5)
+
+        # Get moves
+        moves = npc_poke_data.get('moves', [])
+
+        # Generate random IVs for NPC
+        ivs = {
+            'hp': random.randint(20, 31),
+            'attack': random.randint(20, 31),
+            'defense': random.randint(20, 31),
+            'sp_attack': random.randint(20, 31),
+            'sp_defense': random.randint(20, 31),
+            'speed': random.randint(20, 31)
+        }
+
+        # Create the Pokemon
+        pokemon = Pokemon(
+            species_data=species_data,
+            level=level,
+            owner_discord_id=-1,
+            nature=npc_poke_data.get('nature'),
+            ability=npc_poke_data.get('ability'),
+            moves=moves if moves else None,
+            ivs=ivs
+        )
+
+        return pokemon
+
+
 class NpcTrainerSelectView(View):
     """Select an NPC trainer to battle"""
 
@@ -2630,6 +2907,34 @@ class NpcTrainerSelectView(View):
                     ephemeral=True
                 )
                 return
+
+        # For multi battles, need to select a partner
+        if battle_format_str == 'multi':
+            # Check if player has at least 1 healthy Pokemon
+            healthy_count = sum(1 for p in trainer_pokemon if getattr(p, 'current_hp', 0) > 0)
+            if healthy_count < 1:
+                await interaction.response.send_message(
+                    f"❌ You need at least 1 healthy Pokemon for multi battles!",
+                    ephemeral=True
+                )
+                return
+
+            # Show partner selection UI
+            partner_select_view = MultiPartnerSelectView(
+                bot=self.bot,
+                initiator=interaction.user,
+                npc_data=npc_data,
+                location=self.location,
+                ranked=self.ranked
+            )
+            await interaction.response.send_message(
+                f"🤝 **Multi Battle Challenge!**\n"
+                f"You want to challenge **{npc_data.get('name')}** and their partner to a multi battle!\n"
+                f"Select a partner to join you:",
+                view=partner_select_view,
+                ephemeral=True
+            )
+            return
 
         # Build NPC's party
         npc_pokemon = []

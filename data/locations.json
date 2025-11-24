@@ -249,6 +249,118 @@
             ]
           }
         ]
+      },
+      {
+        "name": "Multi Battle Partner Alex",
+        "class": "Multi Battle Duo",
+        "prize_money": 6000,
+        "battle_format": "multi",
+        "party": [
+          {
+            "species_dex_number": 380,
+            "level": 50,
+            "nature": "timid",
+            "ability": "levitate",
+            "moves": [
+              "dragon_pulse",
+              "psychic",
+              "thunderbolt",
+              "protect"
+            ]
+          },
+          {
+            "species_dex_number": 257,
+            "level": 50,
+            "nature": "jolly",
+            "ability": "blaze",
+            "moves": [
+              "close_combat",
+              "flare_blitz",
+              "stone_edge",
+              "protect"
+            ]
+          },
+          {
+            "species_dex_number": 445,
+            "level": 50,
+            "nature": "jolly",
+            "ability": "rough_skin",
+            "moves": [
+              "earthquake",
+              "dragon_claw",
+              "rock_slide",
+              "swords_dance"
+            ]
+          },
+          {
+            "species_dex_number": 376,
+            "level": 50,
+            "nature": "adamant",
+            "ability": "clear_body",
+            "moves": [
+              "meteor_mash",
+              "earthquake",
+              "zen_headbutt",
+              "bullet_punch"
+            ]
+          }
+        ]
+      },
+      {
+        "name": "Multi Battle Partner Riley",
+        "class": "Multi Battle Duo",
+        "prize_money": 6000,
+        "battle_format": "multi",
+        "party": [
+          {
+            "species_dex_number": 658,
+            "level": 50,
+            "nature": "jolly",
+            "ability": "protean",
+            "moves": [
+              "ice_beam",
+              "water_shuriken",
+              "u_turn",
+              "dark_pulse"
+            ]
+          },
+          {
+            "species_dex_number": 637,
+            "level": 50,
+            "nature": "timid",
+            "ability": "flame_body",
+            "moves": [
+              "bug_buzz",
+              "fire_blast",
+              "quiver_dance",
+              "giga_drain"
+            ]
+          },
+          {
+            "species_dex_number": 450,
+            "level": 50,
+            "nature": "adamant",
+            "ability": "sand_stream",
+            "moves": [
+              "earthquake",
+              "stone_edge",
+              "crunch",
+              "ice_fang"
+            ]
+          },
+          {
+            "species_dex_number": 212,
+            "level": 50,
+            "nature": "adamant",
+            "ability": "technician",
+            "moves": [
+              "bullet_punch",
+              "u_turn",
+              "swords_dance",
+              "superpower"
+            ]
+          }
+        ]
       }
     ],
     "ranked_npc_trainers": [

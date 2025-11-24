@@ -66,17 +66,21 @@ class Battler:
         return any(p.current_hp > 0 for p in self.party)
 
 
-@dataclass 
+@dataclass
 class BattleState:
     """Complete state of an ongoing battle"""
     battle_id: str
     battle_type: BattleType
     battle_format: BattleFormat
-    
+
     # Battlers (either 2 for normal, or 4 for multi battles)
     trainer: Battler  # The player who initiated
     opponent: Battler  # Wild Pokemon, NPC trainer, or other player
-    
+
+    # Multi battle partners (only used when battle_format == MULTI)
+    trainer_partner: Optional[Battler] = None  # Partner of the initiating player
+    opponent_partner: Optional[Battler] = None  # Partner of the opponent
+
     # Battle state
     turn_number: int = 1
     phase: str = 'START'  # START, WAITING_ACTIONS, RESOLVING, FORCED_SWITCH, END
@@ -117,6 +121,51 @@ class BattleState:
     # Ranked metadata
     is_ranked: bool = False
     ranked_context: Dict[str, Any] = field(default_factory=dict)
+
+    def get_all_battlers(self) -> List[Battler]:
+        """Get all battlers in this battle (2 for singles/doubles, 4 for multi)"""
+        battlers = [self.trainer, self.opponent]
+        if self.battle_format == BattleFormat.MULTI:
+            if self.trainer_partner:
+                battlers.append(self.trainer_partner)
+            if self.opponent_partner:
+                battlers.append(self.opponent_partner)
+        return battlers
+
+    def get_team_battlers(self, battler_id: int) -> List[Battler]:
+        """Get all battlers on the same team as the given battler_id"""
+        if battler_id == self.trainer.battler_id or (self.trainer_partner and battler_id == self.trainer_partner.battler_id):
+            # Trainer's team
+            team = [self.trainer]
+            if self.trainer_partner:
+                team.append(self.trainer_partner)
+            return team
+        else:
+            # Opponent's team
+            team = [self.opponent]
+            if self.opponent_partner:
+                team.append(self.opponent_partner)
+            return team
+
+    def get_opposing_team_battlers(self, battler_id: int) -> List[Battler]:
+        """Get all battlers on the opposing team"""
+        if battler_id == self.trainer.battler_id or (self.trainer_partner and battler_id == self.trainer_partner.battler_id):
+            # Return opponent's team
+            team = [self.opponent]
+            if self.opponent_partner:
+                team.append(self.opponent_partner)
+            return team
+        else:
+            # Return trainer's team
+            team = [self.trainer]
+            if self.trainer_partner:
+                team.append(self.trainer_partner)
+            return team
+
+    def is_team_defeated(self, battler_id: int) -> bool:
+        """Check if a team has been completely defeated"""
+        team = self.get_team_battlers(battler_id)
+        return all(not b.has_usable_pokemon() for b in team)
 
 
 class HeldItemManager:
@@ -386,7 +435,14 @@ class BattleEngine:
         if not opponent_party:
             raise ValueError("Opponent must have at least one Pokémon to battle.")
 
-        active_slot_count = 2 if battle_format == BattleFormat.DOUBLES else 1
+        # In multi battles, each trainer sends out 1 Pokemon (2 total per team)
+        # In doubles battles, each trainer sends out 2 Pokemon
+        if battle_format == BattleFormat.MULTI:
+            active_slot_count = 1
+        elif battle_format == BattleFormat.DOUBLES:
+            active_slot_count = 2
+        else:
+            active_slot_count = 1
 
         # Select first non-fainted Pokemon for trainer
         trainer_active_positions = []
@@ -532,7 +588,148 @@ class BattleEngine:
             is_ranked=is_ranked,
             ranked_context=ranked_context
         )
-    
+
+    def start_multi_battle(
+        self,
+        trainer1_id: int,
+        trainer1_name: str,
+        trainer1_party: List[Any],
+        partner1_id: int,
+        partner1_name: str,
+        partner1_party: List[Any],
+        partner1_is_ai: bool,
+        trainer2_id: int,
+        trainer2_name: str,
+        trainer2_party: List[Any],
+        partner2_id: int,
+        partner2_name: str,
+        partner2_party: List[Any],
+        partner2_is_ai: bool,
+        is_ranked: bool = False,
+        ranked_context: Optional[Dict[str, Any]] = None,
+        **kwargs
+    ) -> str:
+        """
+        Start a multi battle (2v2 with partners)
+
+        Args:
+            trainer1_id: ID of first trainer (team 1 leader)
+            trainer1_name: Name of first trainer
+            trainer1_party: Pokemon party for trainer 1
+            partner1_id: ID of trainer 1's partner
+            partner1_name: Name of trainer 1's partner
+            partner1_party: Pokemon party for partner 1
+            partner1_is_ai: Whether partner 1 is AI controlled
+            trainer2_id: ID of second trainer (team 2 leader)
+            trainer2_name: Name of second trainer
+            trainer2_party: Pokemon party for trainer 2
+            partner2_id: ID of trainer 2's partner
+            partner2_name: Name of trainer 2's partner
+            partner2_party: Pokemon party for partner 2
+            partner2_is_ai: Whether partner 2 is AI controlled
+            is_ranked: Whether this is a ranked battle
+            ranked_context: Additional ranked battle metadata
+        """
+        battle_id = str(uuid.uuid4())
+
+        if not all([trainer1_party, partner1_party, trainer2_party, partner2_party]):
+            raise ValueError("All trainers must have at least one Pokémon.")
+
+        # Each trainer in multi battle sends out 1 Pokemon
+        active_slot_count = 1
+
+        # Helper function to get starting positions
+        def get_starting_positions(party):
+            positions = []
+            for i, mon in enumerate(party):
+                if getattr(mon, 'current_hp', 0) > 0:
+                    positions.append(i)
+                    if len(positions) >= active_slot_count:
+                        break
+            return positions if positions else [0]
+
+        # Create all four battlers
+        trainer1 = Battler(
+            battler_id=trainer1_id,
+            battler_name=trainer1_name,
+            party=trainer1_party,
+            active_positions=get_starting_positions(trainer1_party),
+            is_ai=False,
+            can_switch=True,
+            can_use_items=True,
+            can_flee=False
+        )
+
+        partner1 = Battler(
+            battler_id=partner1_id,
+            battler_name=partner1_name,
+            party=partner1_party,
+            active_positions=get_starting_positions(partner1_party),
+            is_ai=partner1_is_ai,
+            can_switch=True,
+            can_use_items=True,
+            can_flee=False,
+            trainer_class=kwargs.get('partner1_class'),
+            prize_money=kwargs.get('partner1_prize', 0)
+        )
+
+        trainer2 = Battler(
+            battler_id=trainer2_id,
+            battler_name=trainer2_name,
+            party=trainer2_party,
+            active_positions=get_starting_positions(trainer2_party),
+            is_ai=partner2_is_ai and kwargs.get('is_pve', False),  # In PvP both team leaders are human
+            can_switch=True,
+            can_use_items=True,
+            can_flee=False
+        )
+
+        partner2 = Battler(
+            battler_id=partner2_id,
+            battler_name=partner2_name,
+            party=partner2_party,
+            active_positions=get_starting_positions(partner2_party),
+            is_ai=partner2_is_ai,
+            can_switch=True,
+            can_use_items=True,
+            can_flee=False,
+            trainer_class=kwargs.get('partner2_class'),
+            prize_money=kwargs.get('partner2_prize', 0)
+        )
+
+        # Determine battle type (PvP if all humans, otherwise TRAINER for PvE)
+        battle_type = BattleType.PVP if not (partner1_is_ai or partner2_is_ai) else BattleType.TRAINER
+
+        # Create battle state
+        battle = BattleState(
+            battle_id=battle_id,
+            battle_type=battle_type,
+            battle_format=BattleFormat.MULTI,
+            trainer=trainer1,
+            opponent=trainer2,
+            trainer_partner=partner1,
+            opponent_partner=partner2,
+            is_ranked=is_ranked,
+            ranked_context=ranked_context or {}
+        )
+
+        # Trigger entry abilities
+        try:
+            battle.entry_messages = self._trigger_entry_abilities(battle)
+        except Exception:
+            battle.entry_messages = []
+
+        # Set ruleset
+        try:
+            battle.ruleset = self.ruleset_handler.resolve_default_ruleset('nat')
+        except Exception:
+            battle.ruleset = 'standardnatdex'
+
+        # Store battle
+        self.active_battles[battle_id] = battle
+
+        return battle_id
+
     # ========================
     # Ability System
     # ========================
@@ -589,28 +786,34 @@ class BattleEngine:
             return {"error": "Battle is already over"}
         
         # Validate battler
-        if battler_id not in [battle.trainer.battler_id, battle.opponent.battler_id]:
+        valid_battler_ids = [battle.trainer.battler_id, battle.opponent.battler_id]
+        if battle.battle_format == BattleFormat.MULTI:
+            if battle.trainer_partner:
+                valid_battler_ids.append(battle.trainer_partner.battler_id)
+            if battle.opponent_partner:
+                valid_battler_ids.append(battle.opponent_partner.battler_id)
+
+        if battler_id not in valid_battler_ids:
             return {"error": "Invalid battler ID"}
-        
-        # Store action with composite key for doubles (battler_id_position)
-        if battle.battle_format == BattleFormat.DOUBLES:
+
+        # Store action with composite key for doubles/multi (battler_id_position)
+        if battle.battle_format in [BattleFormat.DOUBLES, BattleFormat.MULTI]:
             action_key = f"{battler_id}_{action.pokemon_position}"
         else:
             action_key = str(battler_id)
         battle.pending_actions[action_key] = action
-        
+
         # Check if we have all actions needed
-        # For doubles, we need actions from all active Pokemon
-        if battle.battle_format == BattleFormat.DOUBLES:
+        # For doubles/multi, we need actions from all active Pokemon
+        if battle.battle_format in [BattleFormat.DOUBLES, BattleFormat.MULTI]:
             required_action_keys = []
-            if not battle.trainer.is_ai:
-                num_trainer_active = len(battle.trainer.get_active_pokemon())
-                for pos in range(num_trainer_active):
-                    required_action_keys.append(f"{battle.trainer.battler_id}_{pos}")
-            if not battle.opponent.is_ai:
-                num_opponent_active = len(battle.opponent.get_active_pokemon())
-                for pos in range(num_opponent_active):
-                    required_action_keys.append(f"{battle.opponent.battler_id}_{pos}")
+
+            # Collect actions needed from all non-AI battlers
+            for battler in battle.get_all_battlers():
+                if not battler.is_ai:
+                    num_active = len(battler.get_active_pokemon())
+                    for pos in range(num_active):
+                        required_action_keys.append(f"{battler.battler_id}_{pos}")
 
             all_actions_ready = all(key in battle.pending_actions for key in required_action_keys)
             waiting_for = [key for key in required_action_keys if key not in battle.pending_actions]
