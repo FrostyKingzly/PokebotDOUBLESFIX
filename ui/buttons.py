@@ -96,10 +96,19 @@ def reconstruct_pokemon_from_data(poke_data: dict, species_data: dict):
 
 class MainMenuView(View):
     """Main menu button interface"""
-    
-    def __init__(self, bot):
+
+    def __init__(self, bot, user_id: int = None):
         super().__init__(timeout=300)  # 5 minute timeout
         self.bot = bot
+        self.user_id = user_id
+
+        # Check if player is in a wild area and add exit button if so
+        if user_id:
+            from wild_area_manager import WildAreaManager
+            wild_area_manager = WildAreaManager(bot.db)
+            if wild_area_manager.is_in_wild_area(user_id):
+                # Add exit button dynamically
+                self._add_exit_button()
     
     @discord.ui.button(label="👥 Party", style=discord.ButtonStyle.primary, row=0)
     async def party_button(self, interaction: discord.Interaction, button: Button):
@@ -263,25 +272,49 @@ class MainMenuView(View):
     async def travel_button(self, interaction: discord.Interaction, button: Button):
         """Travel to new location"""
         from ui.embeds import EmbedBuilder
-        
+        from wild_area_manager import WildAreaManager
+
         # Get player's current location
         trainer = self.bot.player_manager.get_player(interaction.user.id)
         current_location_id = trainer.current_location_id
-        
-        # Get all locations
+
+        # Get all regular locations
         all_locations = self.bot.location_manager.get_all_locations()
-        
-        if not all_locations or len(all_locations) <= 1:
+
+        # Get wild area zones (only those with Pokemon stations as entry points)
+        wild_area_manager = WildAreaManager(self.bot.db)
+        all_areas = wild_area_manager.get_all_wild_areas()
+
+        wild_zones = {}
+        for area in all_areas:
+            zones = wild_area_manager.get_zones_in_area(area['area_id'])
+            for zone in zones:
+                # Only include zones with Pokemon stations as entry points
+                if zone['has_pokemon_station']:
+                    wild_zones[zone['zone_id']] = {
+                        'name': f"{area['name']} - {zone['name']}",
+                        'description': zone.get('description', area.get('description', '')),
+                        'is_wild_area': True,
+                        'area_id': area['area_id'],
+                        'zone_id': zone['zone_id']
+                    }
+
+        # Combine locations
+        combined_locations = {**all_locations}
+        for zone_id, zone_data in wild_zones.items():
+            combined_locations[zone_id] = zone_data
+
+        if not combined_locations or len(combined_locations) <= 1:
             await interaction.response.send_message(
                 "🧭 No other locations available to travel to!",
                 ephemeral=True
             )
             return
-        
+
         # Show travel selection
-        embed = EmbedBuilder.travel_select(all_locations, current_location_id)
-        view = TravelSelectView(self.bot, all_locations, current_location_id)
-        
+        embed = EmbedBuilder.travel_select(combined_locations, current_location_id)
+        view = TravelSelectView(self.bot, combined_locations, current_location_id)
+
         await interaction.response.send_message(
             embed=embed,
             view=view,
@@ -415,6 +448,63 @@ class MainMenuView(View):
             view = PartyJoinCreateView(self.bot, wild_area_state)
 
             await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+    def _add_exit_button(self):
+        """Add exit wild area button dynamically"""
+        exit_button = Button(
+            label="🚪 Exit Wild Area",
+            style=discord.ButtonStyle.danger,
+            custom_id="exit_wild_area",
+            row=3
+        )
+        exit_button.callback = self._exit_wild_area_callback
+        self.add_item(exit_button)
+
+    async def _exit_wild_area_callback(self, interaction: discord.Interaction):
+        """Handle exit wild area button"""
+        from wild_area_manager import WildAreaManager
+
+        wild_area_manager = WildAreaManager(self.bot.db)
+
+        # Check if in wild area
+        if not wild_area_manager.is_in_wild_area(interaction.user.id):
+            await interaction.response.send_message(
+                "❌ You're not in a wild area!",
+                ephemeral=True
+            )
+            return
+
+        # Get current state
+        state = wild_area_manager.get_wild_area_state(interaction.user.id)
+
+        # Show confirmation
+        view = ExitWildAreaConfirmView(self.bot, state)
+
+        embed = discord.Embed(
+            title="🚪 Exit Wild Area",
+            description="Are you sure you want to leave?",
+            color=discord.Color.orange()
+        )
+
+        embed.add_field(
+            name="⚡ Current Stamina",
+            value=f"{state['current_stamina']}/{state['entry_stamina']}",
+            inline=True
+        )
+
+        if state['current_stamina'] <= 0:
+            embed.add_field(
+                name="⚠️ Warning",
+                value="**You're out of stamina!** Exiting now will count as a blackout.",
+                inline=False
+            )
+            embed.color = discord.Color.red()
+
+        await interaction.response.send_message(
+            embed=embed,
+            view=view,
+            ephemeral=True
+        )
 
 
 class RegistrationView(View):
@@ -1714,27 +1804,83 @@ class TravelSelectView(View):
     async def location_callback(self, interaction: discord.Interaction):
         """Handle location selection"""
         new_location_id = interaction.data['values'][0]
-        
+
         if new_location_id == self.current_location_id:
             await interaction.response.send_message(
                 "❌ You're already at this location!",
                 ephemeral=True
             )
             return
-        
-        # Update player's location
-        self.bot.player_manager.update_player(
-            interaction.user.id,
-            current_location_id=new_location_id
-        )
-        
-        location_name = self.bot.location_manager.get_location_name(new_location_id)
-        
-        await interaction.response.send_message(
-            f"🧭 You traveled to **{location_name}**!",
-            ephemeral=True
-        )
-        
+
+        location_data = self.all_locations.get(new_location_id, {})
+
+        # Check if this is a wild area
+        if location_data.get('is_wild_area'):
+            # Show confirmation dialog with warning
+            from wild_area_manager import WildAreaManager
+
+            wild_area_manager = WildAreaManager(self.bot.db)
+            area_id = location_data['area_id']
+            zone_id = location_data['zone_id']
+
+            area = wild_area_manager.get_wild_area(area_id)
+            zone = wild_area_manager.get_zone(zone_id)
+
+            # Create confirmation view
+            view = WildAreaEntryConfirmView(self.bot, area, zone)
+
+            embed = discord.Embed(
+                title="⚠️ Entering Wild Area",
+                description=f"You're about to enter **{area['name']}**!",
+                color=discord.Color.orange()
+            )
+
+            embed.add_field(
+                name="🗺️ Starting Zone",
+                value=f"**{zone['name']}**\n{zone.get('description', '')}",
+                inline=False
+            )
+
+            embed.add_field(
+                name="⚡ Stamina System",
+                value=(
+                    "• Your current stamina will be tracked\n"
+                    "• Moving to new zones costs stamina\n"
+                    "• Pokemon fainting costs stamina\n"
+                    "• **If you run out of stamina, you'll black out and lose items/EXP!**\n"
+                    "• Caught Pokemon are always kept"
+                ),
+                inline=False
+            )
+
+            if zone['has_pokemon_station']:
+                embed.add_field(
+                    name="🏥 Pokemon Station",
+                    value="This zone has a Pokemon Station where you can heal and access boxes!",
+                    inline=False
+                )
+
+            embed.set_footer(text="⚠️ Make sure you're prepared before entering!")
+
+            await interaction.response.send_message(
+                embed=embed,
+                view=view,
+                ephemeral=True
+            )
+        else:
+            # Regular location travel
+            self.bot.player_manager.update_player(
+                interaction.user.id,
+                current_location_id=new_location_id
+            )
+
+            location_name = self.bot.location_manager.get_location_name(new_location_id)
+
+            await interaction.response.send_message(
+                f"🧭 You traveled to **{location_name}**!",
+                ephemeral=True
+            )
+
         self.stop()
 
 
@@ -3811,4 +3957,173 @@ class ConfirmView(View):
         self.value = False
         self.stop()
         await interaction.response.defer()
+
+
+class WildAreaEntryConfirmView(View):
+    """Confirmation view for entering a wild area"""
+
+    def __init__(self, bot, area: Dict, zone: Dict):
+        super().__init__(timeout=60)
+        self.bot = bot
+        self.area = area
+        self.zone = zone
+
+    @discord.ui.button(label="✅ Enter Wild Area", style=discord.ButtonStyle.success)
+    async def confirm_button(self, interaction: discord.Interaction, button: Button):
+        """Confirm entry into wild area"""
+        from wild_area_manager import WildAreaManager
+
+        wild_area_manager = WildAreaManager(self.bot.db)
+
+        # Check if player is already in a wild area
+        if wild_area_manager.is_in_wild_area(interaction.user.id):
+            # Exit current wild area first
+            wild_area_manager.exit_wild_area(interaction.user.id, success=True)
+
+        # Enter the new wild area
+        success = wild_area_manager.enter_wild_area(
+            interaction.user.id,
+            self.area['area_id'],
+            self.zone['zone_id']
+        )
+
+        if success:
+            # Update player's location to the zone
+            self.bot.player_manager.update_player(
+                interaction.user.id,
+                current_location_id=self.zone['zone_id']
+            )
+
+            # Get stamina info
+            state = wild_area_manager.get_wild_area_state(interaction.user.id)
+
+            embed = discord.Embed(
+                title=f"🗺️ Entered {self.area['name']}",
+                description=f"You've entered **{self.zone['name']}**!",
+                color=discord.Color.green()
+            )
+
+            embed.add_field(
+                name="⚡ Stamina",
+                value=f"{state['current_stamina']}/{state['entry_stamina']}",
+                inline=True
+            )
+
+            if self.zone['has_pokemon_station']:
+                embed.add_field(
+                    name="🏥 Station",
+                    value="Available",
+                    inline=True
+                )
+
+            embed.add_field(
+                name="💡 Tip",
+                value="Use **🤝 Team Up** in `/menu` to create or join a party!",
+                inline=False
+            )
+
+            await interaction.response.edit_message(
+                embed=embed,
+                view=None
+            )
+        else:
+            await interaction.response.edit_message(
+                content="❌ Failed to enter wild area. Please try again.",
+                embed=None,
+                view=None
+            )
+
+        self.stop()
+
+    @discord.ui.button(label="❌ Cancel", style=discord.ButtonStyle.danger)
+    async def cancel_button(self, interaction: discord.Interaction, button: Button):
+        """Cancel entry"""
+        await interaction.response.edit_message(
+            content="✅ Canceled. You remain at your current location.",
+            embed=None,
+            view=None
+        )
+        self.stop()
+
+
+class ExitWildAreaConfirmView(View):
+    """Confirmation view for exiting a wild area"""
+
+    def __init__(self, bot, state: Dict):
+        super().__init__(timeout=60)
+        self.bot = bot
+        self.state = state
+
+    @discord.ui.button(label="✅ Exit", style=discord.ButtonStyle.success)
+    async def confirm_button(self, interaction: discord.Interaction, button: Button):
+        """Confirm exit from wild area"""
+        from wild_area_manager import WildAreaManager, PartyManager
+
+        wild_area_manager = WildAreaManager(self.bot.db)
+        party_manager = PartyManager(self.bot.db)
+
+        # Check if in a party and leave if so
+        if party_manager.is_in_party(interaction.user.id):
+            party_manager.leave_party(interaction.user.id)
+
+        # Determine success based on stamina
+        success = self.state['current_stamina'] > 0
+
+        # Exit wild area
+        wild_area_manager.exit_wild_area(interaction.user.id, success)
+
+        # Update location to default
+        self.bot.player_manager.update_player(
+            interaction.user.id,
+            current_location_id='lights_district_central_plaza'
+        )
+
+        if success:
+            embed = discord.Embed(
+                title="✅ Exited Wild Area",
+                description="You've successfully left the wild area!",
+                color=discord.Color.green()
+            )
+            embed.add_field(
+                name="📍 Location",
+                value="You're back at the Lights District Central Plaza.",
+                inline=False
+            )
+        else:
+            embed = discord.Embed(
+                title="💀 Blacked Out!",
+                description="You ran out of stamina and blacked out!",
+                color=discord.Color.red()
+            )
+            embed.add_field(
+                name="⚠️ Losses",
+                value=(
+                    "• All items gained in the wild area have been lost\n"
+                    "• All Pokemon EXP gained in the wild area has been lost\n"
+                    "• Money spent/earned has been reverted\n"
+                    "✅ Caught Pokemon were kept!"
+                ),
+                inline=False
+            )
+            embed.add_field(
+                name="📍 Location",
+                value="You've been returned to the Lights District Central Plaza.",
+                inline=False
+            )
+
+        await interaction.response.edit_message(
+            embed=embed,
+            view=None
+        )
+        self.stop()
+
+    @discord.ui.button(label="❌ Stay", style=discord.ButtonStyle.danger)
+    async def cancel_button(self, interaction: discord.Interaction, button: Button):
+        """Cancel exit"""
+        await interaction.response.edit_message(
+            content="✅ Canceled. You remain in the wild area.",
+            embed=None,
+            view=None
+        )
+        self.stop()
     

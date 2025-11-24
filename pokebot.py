@@ -162,10 +162,10 @@ async def menu_command(interaction: discord.Interaction):
     # Create main menu embed
     rank_manager = getattr(interaction.client, "rank_manager", None)
     embed = EmbedBuilder.main_menu(player_data, rank_manager=rank_manager)
-    
-    # Create main menu view with buttons
-    view = MainMenuView(interaction.client)
-    
+
+    # Create main menu view with buttons (pass user_id for wild area detection)
+    view = MainMenuView(interaction.client, user_id=interaction.user.id)
+
     await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
 
