@@ -2231,13 +2231,30 @@ class PvPChallengeSetupView(View):
                 )
                 self.partner_select.callback = self.partner_callback
                 self.add_item(self.partner_select)
+
+                # Update the message to show the new partner selector
+                try:
+                    await interaction.response.edit_message(view=self)
+                except:
+                    await interaction.response.defer()
+            else:
+                await interaction.response.send_message(
+                    "❌ No other trainers available to be your partner!",
+                    ephemeral=True
+                )
         elif value != "multi" and self.partner_select:
             # Remove partner selector if changing away from multi
             self.remove_item(self.partner_select)
             self.partner_select = None
             self.selected_partner_id = None
 
-        await interaction.response.defer()
+            # Update the message to remove the partner selector
+            try:
+                await interaction.response.edit_message(view=self)
+            except:
+                await interaction.response.defer()
+        else:
+            await interaction.response.defer()
 
     async def partner_callback(self, interaction: discord.Interaction):
         value = interaction.data.get('values', [None])[0]
