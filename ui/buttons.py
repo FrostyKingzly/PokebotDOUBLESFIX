@@ -332,27 +332,40 @@ class MainMenuView(View):
     async def battle_button(self, interaction: discord.Interaction, button: Button):
         """Battle options"""
         from ui.embeds import EmbedBuilder
-        
+
         # Get player's current location
         trainer = self.bot.player_manager.get_player(interaction.user.id)
+        if not trainer:
+            await interaction.response.send_message(
+                "❌ You need to register first! Use `/register` to get started.",
+                ephemeral=True
+            )
+            return
+
         current_location_id = trainer.current_location_id
         location = self.bot.location_manager.get_location(current_location_id)
 
+        if not location:
+            await interaction.response.send_message(
+                "❌ Your current location is invalid. Please travel to a valid location first.",
+                ephemeral=True
+            )
+            return
+
         available_pvp = None
-        if location:
-            try:
-                players_here = self.bot.player_manager.get_players_in_location(
-                    current_location_id,
-                    exclude_user_id=interaction.user.id
-                )
-            except AttributeError:
-                players_here = []
-            battle_cog = self.bot.get_cog('BattleCog')
-            busy_ids = set(battle_cog.user_battles.keys()) if battle_cog else set()
-            available_pvp = len([
-                p for p in players_here
-                if getattr(p, 'discord_user_id', None) not in busy_ids
-            ])
+        try:
+            players_here = self.bot.player_manager.get_players_in_location(
+                current_location_id,
+                exclude_user_id=interaction.user.id
+            )
+        except AttributeError:
+            players_here = []
+        battle_cog = self.bot.get_cog('BattleCog')
+        busy_ids = set(battle_cog.user_battles.keys()) if battle_cog else set()
+        available_pvp = len([
+            p for p in players_here
+            if getattr(p, 'discord_user_id', None) not in busy_ids
+        ])
 
         # Show battle menu
         embed = EmbedBuilder.battle_menu(location, available_pvp=available_pvp)
