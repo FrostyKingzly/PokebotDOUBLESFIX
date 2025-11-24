@@ -105,7 +105,7 @@ class MainMenuView(View):
         # Check if player is in a wild area and add exit button if so
         if user_id:
             from wild_area_manager import WildAreaManager
-            wild_area_manager = WildAreaManager(bot.db)
+            wild_area_manager = WildAreaManager(bot.player_manager.db)
             if wild_area_manager.is_in_wild_area(user_id):
                 # Add exit button dynamically
                 self._add_exit_button()
@@ -282,7 +282,7 @@ class MainMenuView(View):
         all_locations = self.bot.location_manager.get_all_locations()
 
         # Get wild area zones (only those with Pokemon stations as entry points)
-        wild_area_manager = WildAreaManager(self.bot.db)
+        wild_area_manager = WildAreaManager(self.bot.player_manager.db)
         all_areas = wild_area_manager.get_all_wild_areas()
 
         wild_zones = {}
@@ -415,8 +415,8 @@ class MainMenuView(View):
         """Party/Team system for Wild Areas"""
         from wild_area_manager import WildAreaManager, PartyManager
 
-        wild_area_manager = WildAreaManager(self.bot.db)
-        party_manager = PartyManager(self.bot.db)
+        wild_area_manager = WildAreaManager(self.bot.player_manager.db)
+        party_manager = PartyManager(self.bot.player_manager.db)
 
         # Check if player is in a wild area
         if not wild_area_manager.is_in_wild_area(interaction.user.id):
@@ -464,7 +464,7 @@ class MainMenuView(View):
         """Handle exit wild area button"""
         from wild_area_manager import WildAreaManager
 
-        wild_area_manager = WildAreaManager(self.bot.db)
+        wild_area_manager = WildAreaManager(self.bot.player_manager.db)
 
         # Check if in wild area
         if not wild_area_manager.is_in_wild_area(interaction.user.id):
@@ -1819,7 +1819,7 @@ class TravelSelectView(View):
             # Show confirmation dialog with warning
             from wild_area_manager import WildAreaManager
 
-            wild_area_manager = WildAreaManager(self.bot.db)
+            wild_area_manager = WildAreaManager(self.bot.player_manager.db)
             area_id = location_data['area_id']
             zone_id = location_data['zone_id']
 
@@ -3634,7 +3634,7 @@ class PartyJoinCreateView(View):
         """Create a new party"""
         from wild_area_manager import PartyManager
 
-        party_manager = PartyManager(self.bot.db)
+        party_manager = PartyManager(self.bot.player_manager.db)
 
         # Check if already in a party
         if party_manager.is_in_party(interaction.user.id):
@@ -3653,7 +3653,7 @@ class PartyJoinCreateView(View):
         """Join an existing party"""
         from wild_area_manager import PartyManager
 
-        party_manager = PartyManager(self.bot.db)
+        party_manager = PartyManager(self.bot.player_manager.db)
 
         # Check if already in a party
         if party_manager.is_in_party(interaction.user.id):
@@ -3701,7 +3701,7 @@ class PartyNameModal(discord.ui.Modal, title="Create Team"):
         """Create the party"""
         from wild_area_manager import PartyManager
 
-        party_manager = PartyManager(self.bot.db)
+        party_manager = PartyManager(self.bot.player_manager.db)
 
         # Create party
         party_id = party_manager.create_party(
@@ -3747,7 +3747,7 @@ class PartySelectView(View):
         """Join the selected party"""
         from wild_area_manager import PartyManager
 
-        party_manager = PartyManager(self.bot.db)
+        party_manager = PartyManager(self.bot.player_manager.db)
         party_id = interaction.data['values'][0]
 
         # Join party
@@ -3784,7 +3784,7 @@ class PartyActionsView(View):
         """Leave the party"""
         from wild_area_manager import PartyManager
 
-        party_manager = PartyManager(self.bot.db)
+        party_manager = PartyManager(self.bot.player_manager.db)
 
         # Confirm
         view = ConfirmView()
@@ -3815,7 +3815,7 @@ class PartyActionsView(View):
         """Disband the party (leader only)"""
         from wild_area_manager import PartyManager
 
-        party_manager = PartyManager(self.bot.db)
+        party_manager = PartyManager(self.bot.player_manager.db)
 
         # Confirm
         view = ConfirmView()
@@ -3853,7 +3853,7 @@ class PartyActionsView(View):
 
         from wild_area_manager import WildAreaManager
 
-        wild_area_manager = WildAreaManager(self.bot.db)
+        wild_area_manager = WildAreaManager(self.bot.player_manager.db)
 
         # Get available zones
         zones = wild_area_manager.get_zones_in_area(self.party['area_id'])
@@ -3905,8 +3905,8 @@ class ZoneSelectView(View):
         """Move party to selected zone"""
         from wild_area_manager import WildAreaManager, PartyManager
 
-        wild_area_manager = WildAreaManager(self.bot.db)
-        party_manager = PartyManager(self.bot.db)
+        wild_area_manager = WildAreaManager(self.bot.player_manager.db)
+        party_manager = PartyManager(self.bot.player_manager.db)
 
         zone_id = interaction.data['values'][0]
         zone = wild_area_manager.get_zone(zone_id)
@@ -3973,7 +3973,7 @@ class WildAreaEntryConfirmView(View):
         """Confirm entry into wild area"""
         from wild_area_manager import WildAreaManager
 
-        wild_area_manager = WildAreaManager(self.bot.db)
+        wild_area_manager = WildAreaManager(self.bot.player_manager.db)
 
         # Check if player is already in a wild area
         if wild_area_manager.is_in_wild_area(interaction.user.id):
@@ -4059,8 +4059,8 @@ class ExitWildAreaConfirmView(View):
         """Confirm exit from wild area"""
         from wild_area_manager import WildAreaManager, PartyManager
 
-        wild_area_manager = WildAreaManager(self.bot.db)
-        party_manager = PartyManager(self.bot.db)
+        wild_area_manager = WildAreaManager(self.bot.player_manager.db)
+        party_manager = PartyManager(self.bot.player_manager.db)
 
         # Check if in a party and leave if so
         if party_manager.is_in_party(interaction.user.id):
