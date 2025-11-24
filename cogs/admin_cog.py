@@ -1366,6 +1366,278 @@ class ChannelLocationSelectView(discord.ui.View):
         )
         self.stop()
 
+    # ============================================================
+    # WILD AREA MANAGEMENT
+    # ============================================================
+
+    @app_commands.command(name="create_wild_area", description="[ADMIN] Create a new wild area")
+    @app_commands.describe(
+        area_id="Unique ID for the area (e.g., 'viridian_forest')",
+        name="Display name of the area",
+        description="Description of the wild area"
+    )
+    @app_commands.check(is_admin)
+    async def create_wild_area(
+        self,
+        interaction: discord.Interaction,
+        area_id: str,
+        name: str,
+        description: str = None
+    ):
+        """Create a new wild area"""
+        from wild_area_manager import WildAreaManager
+
+        wild_area_manager = WildAreaManager(self.bot.db)
+
+        # Create area
+        success = wild_area_manager.create_wild_area(area_id, name, description)
+
+        if success:
+            await interaction.response.send_message(
+                f"✅ Created wild area **{name}** (ID: `{area_id}`)",
+                ephemeral=True
+            )
+        else:
+            await interaction.response.send_message(
+                f"❌ Failed to create wild area. Area with ID `{area_id}` may already exist.",
+                ephemeral=True
+            )
+
+    @app_commands.command(name="create_zone", description="[ADMIN] Create a zone in a wild area")
+    @app_commands.describe(
+        zone_id="Unique ID for the zone",
+        area_id="Wild area ID this zone belongs to",
+        name="Display name of the zone",
+        description="Description of the zone",
+        has_station="Whether this zone has a Pokemon station",
+        travel_cost="Stamina cost to travel to this zone (default: 5)"
+    )
+    @app_commands.check(is_admin)
+    async def create_zone(
+        self,
+        interaction: discord.Interaction,
+        zone_id: str,
+        area_id: str,
+        name: str,
+        description: str = None,
+        has_station: bool = False,
+        travel_cost: int = 5
+    ):
+        """Create a zone in a wild area"""
+        from wild_area_manager import WildAreaManager
+
+        wild_area_manager = WildAreaManager(self.bot.db)
+
+        # Create zone
+        success = wild_area_manager.create_zone(
+            zone_id=zone_id,
+            area_id=area_id,
+            name=name,
+            description=description,
+            has_pokemon_station=has_station,
+            zone_travel_cost=travel_cost
+        )
+
+        if success:
+            station_text = "🏥 with Pokemon Station" if has_station else ""
+            await interaction.response.send_message(
+                f"✅ Created zone **{name}** {station_text} (ID: `{zone_id}`) in area `{area_id}`\n"
+                f"Travel Cost: {travel_cost} stamina",
+                ephemeral=True
+            )
+        else:
+            await interaction.response.send_message(
+                f"❌ Failed to create zone. Zone with ID `{zone_id}` may already exist, or area `{area_id}` doesn't exist.",
+                ephemeral=True
+            )
+
+    @app_commands.command(name="enter_wild_area", description="[ADMIN] Enter a player into a wild area")
+    @app_commands.describe(
+        user="The player to enter",
+        area_id="Wild area ID",
+        zone_id="Starting zone ID"
+    )
+    @app_commands.check(is_admin)
+    async def enter_wild_area(
+        self,
+        interaction: discord.Interaction,
+        user: discord.User,
+        area_id: str,
+        zone_id: str
+    ):
+        """Enter a player into a wild area"""
+        from wild_area_manager import WildAreaManager
+
+        wild_area_manager = WildAreaManager(self.bot.db)
+
+        # Check if player exists
+        if not self.bot.player_manager.player_exists(user.id):
+            await interaction.response.send_message(
+                f"❌ {user.mention} hasn't registered yet!",
+                ephemeral=True
+            )
+            return
+
+        # Enter wild area
+        success = wild_area_manager.enter_wild_area(user.id, area_id, zone_id)
+
+        if success:
+            await interaction.response.send_message(
+                f"✅ {user.mention} entered **{area_id}** at zone **{zone_id}**!",
+                ephemeral=True
+            )
+        else:
+            await interaction.response.send_message(
+                f"❌ Failed to enter wild area. Area or zone may not exist.",
+                ephemeral=True
+            )
+
+    @app_commands.command(name="exit_wild_area", description="[ADMIN] Remove a player from wild area")
+    @app_commands.describe(
+        user="The player to exit",
+        success="Whether the exit was successful (true) or player blacked out (false)"
+    )
+    @app_commands.check(is_admin)
+    async def exit_wild_area(
+        self,
+        interaction: discord.Interaction,
+        user: discord.User,
+        success: bool = True
+    ):
+        """Exit a player from a wild area"""
+        from wild_area_manager import WildAreaManager
+
+        wild_area_manager = WildAreaManager(self.bot.db)
+
+        # Exit wild area
+        exited = wild_area_manager.exit_wild_area(user.id, success)
+
+        if exited:
+            if success:
+                await interaction.response.send_message(
+                    f"✅ {user.mention} successfully exited the wild area!",
+                    ephemeral=True
+                )
+            else:
+                await interaction.response.send_message(
+                    f"⚠️ {user.mention} blacked out! Items and EXP reverted, but caught Pokemon kept.",
+                    ephemeral=True
+                )
+        else:
+            await interaction.response.send_message(
+                f"❌ {user.mention} is not in a wild area.",
+                ephemeral=True
+            )
+
+    @app_commands.command(name="create_static_encounter", description="[ADMIN] Create a static encounter")
+    @app_commands.describe(
+        zone_id="Zone ID where encounter appears",
+        encounter_type="Type: public_wild, player_specific, or forced",
+        species="Pokemon species (name or dex number)",
+        level="Pokemon level",
+        target_user="Target player (for player_specific or forced encounters)",
+        battle_format="Battle format: singles, doubles, multi, or raid"
+    )
+    @app_commands.check(is_admin)
+    async def create_static_encounter(
+        self,
+        interaction: discord.Interaction,
+        zone_id: str,
+        encounter_type: str,
+        species: str,
+        level: int,
+        target_user: Optional[discord.User] = None,
+        battle_format: str = "singles"
+    ):
+        """Create a static encounter"""
+        from wild_area_manager import StaticEncounterManager
+
+        static_encounter_manager = StaticEncounterManager(self.bot.db)
+
+        # Validate encounter type
+        valid_types = ['public_wild', 'player_specific', 'forced']
+        if encounter_type not in valid_types:
+            await interaction.response.send_message(
+                f"❌ Invalid encounter type. Must be one of: {', '.join(valid_types)}",
+                ephemeral=True
+            )
+            return
+
+        # Validate battle format
+        valid_formats = ['singles', 'doubles', 'multi', 'raid']
+        if battle_format not in valid_formats:
+            await interaction.response.send_message(
+                f"❌ Invalid battle format. Must be one of: {', '.join(valid_formats)}",
+                ephemeral=True
+            )
+            return
+
+        # Get species
+        species_data = self.bot.species_db.get_species(species)
+        if not species_data:
+            await interaction.response.send_message(
+                f"❌ Could not find species: {species}",
+                ephemeral=True
+            )
+            return
+
+        # Create pokemon data
+        pokemon_data = {
+            'species_dex_number': species_data['dex_number'],
+            'species_name': species_data['name'],
+            'level': level
+        }
+
+        # Create encounter
+        encounter_id = static_encounter_manager.create_static_encounter(
+            zone_id=zone_id,
+            encounter_type=encounter_type,
+            pokemon_data=pokemon_data,
+            battle_format=battle_format,
+            target_player_id=target_user.id if target_user else None
+        )
+
+        target_text = f" for {target_user.mention}" if target_user else ""
+        await interaction.response.send_message(
+            f"✅ Created {encounter_type} encounter:\n"
+            f"**{species_data['name']}** (Lv. {level})\n"
+            f"Zone: `{zone_id}`\n"
+            f"Format: {battle_format}{target_text}\n"
+            f"Encounter ID: `{encounter_id}`",
+            ephemeral=True
+        )
+
+    @app_commands.command(name="list_wild_areas", description="[ADMIN] List all wild areas")
+    @app_commands.check(is_admin)
+    async def list_wild_areas(self, interaction: discord.Interaction):
+        """List all wild areas"""
+        from wild_area_manager import WildAreaManager
+
+        wild_area_manager = WildAreaManager(self.bot.db)
+        areas = wild_area_manager.get_all_wild_areas()
+
+        if not areas:
+            await interaction.response.send_message(
+                "No wild areas found.",
+                ephemeral=True
+            )
+            return
+
+        embed = discord.Embed(
+            title="🗺️ Wild Areas",
+            color=discord.Color.blue()
+        )
+
+        for area in areas:
+            zones = wild_area_manager.get_zones_in_area(area['area_id'])
+            embed.add_field(
+                name=f"{area['name']} (`{area['area_id']}`)",
+                value=f"{area.get('description', 'No description')}\n**Zones:** {len(zones)}",
+                inline=False
+            )
+
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
 
 async def setup(bot):
     """Setup function for loading the cog"""

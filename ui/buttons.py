@@ -377,6 +377,45 @@ class MainMenuView(View):
             ephemeral=True
         )
 
+    @discord.ui.button(label="🤝 Team Up", style=discord.ButtonStyle.success, row=2)
+    async def party_up_button(self, interaction: discord.Interaction, button: Button):
+        """Party/Team system for Wild Areas"""
+        from wild_area_manager import WildAreaManager, PartyManager
+
+        wild_area_manager = WildAreaManager(self.bot.db)
+        party_manager = PartyManager(self.bot.db)
+
+        # Check if player is in a wild area
+        if not wild_area_manager.is_in_wild_area(interaction.user.id):
+            await interaction.response.send_message(
+                "❌ You must be in a Wild Area to use the team system!",
+                ephemeral=True
+            )
+            return
+
+        # Check if already in a party
+        current_party = party_manager.get_player_party(interaction.user.id)
+
+        if current_party:
+            # Show party info
+            from ui.embeds import EmbedBuilder
+            party_members = party_manager.get_party_members(current_party['party_id'])
+
+            embed = EmbedBuilder.party_info(current_party, party_members, self.bot.player_manager)
+            view = PartyActionsView(self.bot, current_party, is_leader=(current_party['leader_discord_id'] == interaction.user.id))
+
+            await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        else:
+            # Show party creation/join menu
+            from ui.embeds import EmbedBuilder
+            wild_area_state = wild_area_manager.get_wild_area_state(interaction.user.id)
+            available_parties = party_manager.get_parties_in_area(wild_area_state['area_id'])
+
+            embed = EmbedBuilder.party_menu(wild_area_state, available_parties)
+            view = PartyJoinCreateView(self.bot, wild_area_state)
+
+            await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
 
 class RegistrationView(View):
     """Registration flow buttons"""
@@ -3428,10 +3467,348 @@ class NpcTrainerSelectView(View):
         # Set gender if specified
         if 'gender' in npc_poke_data:
             pokemon.gender = npc_poke_data['gender']
-        
+
         # Set held item if specified
         if 'held_item' in npc_poke_data:
             pokemon.held_item = npc_poke_data['held_item']
-        
+
         return pokemon
+
+
+class PartyJoinCreateView(View):
+    """View for creating or joining a party"""
+
+    def __init__(self, bot, wild_area_state: Dict):
+        super().__init__(timeout=300)
+        self.bot = bot
+        self.wild_area_state = wild_area_state
+
+    @discord.ui.button(label="➕ Create Team", style=discord.ButtonStyle.success, row=0)
+    async def create_party_button(self, interaction: discord.Interaction, button: Button):
+        """Create a new party"""
+        from wild_area_manager import PartyManager
+
+        party_manager = PartyManager(self.bot.db)
+
+        # Check if already in a party
+        if party_manager.is_in_party(interaction.user.id):
+            await interaction.response.send_message(
+                "❌ You're already in a team! Leave your current team first.",
+                ephemeral=True
+            )
+            return
+
+        # Show party name modal
+        modal = PartyNameModal(self.bot, self.wild_area_state)
+        await interaction.response.send_modal(modal)
+
+    @discord.ui.button(label="🔍 Join Team", style=discord.ButtonStyle.primary, row=0)
+    async def join_party_button(self, interaction: discord.Interaction, button: Button):
+        """Join an existing party"""
+        from wild_area_manager import PartyManager
+
+        party_manager = PartyManager(self.bot.db)
+
+        # Check if already in a party
+        if party_manager.is_in_party(interaction.user.id):
+            await interaction.response.send_message(
+                "❌ You're already in a team! Leave your current team first.",
+                ephemeral=True
+            )
+            return
+
+        # Get available parties
+        available_parties = party_manager.get_parties_in_area(self.wild_area_state['area_id'])
+
+        if not available_parties:
+            await interaction.response.send_message(
+                "❌ No teams available in this area. Create one!",
+                ephemeral=True
+            )
+            return
+
+        # Show party selection dropdown
+        view = PartySelectView(self.bot, available_parties)
+        await interaction.response.send_message(
+            "Select a team to join:",
+            view=view,
+            ephemeral=True
+        )
+
+
+class PartyNameModal(discord.ui.Modal, title="Create Team"):
+    """Modal for entering party name"""
+
+    party_name = discord.ui.TextInput(
+        label="Team Name",
+        placeholder="Enter a name for your team...",
+        required=True,
+        max_length=50
+    )
+
+    def __init__(self, bot, wild_area_state: Dict):
+        super().__init__()
+        self.bot = bot
+        self.wild_area_state = wild_area_state
+
+    async def on_submit(self, interaction: discord.Interaction):
+        """Create the party"""
+        from wild_area_manager import PartyManager
+
+        party_manager = PartyManager(self.bot.db)
+
+        # Create party
+        party_id = party_manager.create_party(
+            leader_discord_id=interaction.user.id,
+            party_name=self.party_name.value,
+            area_id=self.wild_area_state['area_id'],
+            starting_zone_id=self.wild_area_state['current_zone_id']
+        )
+
+        await interaction.response.send_message(
+            f"✅ Created team **{self.party_name.value}**! Other players can now join your team.",
+            ephemeral=True
+        )
+
+
+class PartySelectView(View):
+    """View for selecting a party to join"""
+
+    def __init__(self, bot, available_parties: List[Dict]):
+        super().__init__(timeout=300)
+        self.bot = bot
+
+        # Add dropdown with parties
+        options = []
+        for party in available_parties[:25]:  # Discord limit
+            options.append(
+                discord.SelectOption(
+                    label=party['party_name'],
+                    description=f"Leader: {party['leader_discord_id']}",
+                    value=party['party_id']
+                )
+            )
+
+        select = Select(
+            placeholder="Choose a team to join...",
+            options=options,
+            row=0
+        )
+        select.callback = self.party_selected
+        self.add_item(select)
+
+    async def party_selected(self, interaction: discord.Interaction):
+        """Join the selected party"""
+        from wild_area_manager import PartyManager
+
+        party_manager = PartyManager(self.bot.db)
+        party_id = interaction.data['values'][0]
+
+        # Join party
+        success = party_manager.join_party(party_id, interaction.user.id)
+
+        if success:
+            party = party_manager.get_party(party_id)
+            await interaction.response.send_message(
+                f"✅ Joined team **{party['party_name']}**!",
+                ephemeral=True
+            )
+        else:
+            await interaction.response.send_message(
+                "❌ Failed to join team. You may already be in this team.",
+                ephemeral=True
+            )
+
+
+class PartyActionsView(View):
+    """View for party management actions"""
+
+    def __init__(self, bot, party: Dict, is_leader: bool):
+        super().__init__(timeout=300)
+        self.bot = bot
+        self.party = party
+        self.is_leader = is_leader
+
+        # Only show disband button to leader
+        if not is_leader:
+            self.disband_button.disabled = True
+
+    @discord.ui.button(label="🚶 Leave Team", style=discord.ButtonStyle.danger, row=0)
+    async def leave_button(self, interaction: discord.Interaction, button: Button):
+        """Leave the party"""
+        from wild_area_manager import PartyManager
+
+        party_manager = PartyManager(self.bot.db)
+
+        # Confirm
+        view = ConfirmView()
+        await interaction.response.send_message(
+            "⚠️ Are you sure you want to leave the team?",
+            view=view,
+            ephemeral=True
+        )
+
+        await view.wait()
+
+        if view.value:
+            success = party_manager.leave_party(interaction.user.id)
+
+            if success:
+                await interaction.followup.send(
+                    "✅ Left the team.",
+                    ephemeral=True
+                )
+            else:
+                await interaction.followup.send(
+                    "❌ Failed to leave team.",
+                    ephemeral=True
+                )
+
+    @discord.ui.button(label="💔 Disband Team", style=discord.ButtonStyle.danger, row=0)
+    async def disband_button(self, interaction: discord.Interaction, button: Button):
+        """Disband the party (leader only)"""
+        from wild_area_manager import PartyManager
+
+        party_manager = PartyManager(self.bot.db)
+
+        # Confirm
+        view = ConfirmView()
+        await interaction.response.send_message(
+            "⚠️ Are you sure you want to disband the team? All members will be removed.",
+            view=view,
+            ephemeral=True
+        )
+
+        await view.wait()
+
+        if view.value:
+            success = party_manager.disband_party(self.party['party_id'])
+
+            if success:
+                await interaction.followup.send(
+                    "✅ Disbanded the team.",
+                    ephemeral=True
+                )
+            else:
+                await interaction.followup.send(
+                    "❌ Failed to disband team.",
+                    ephemeral=True
+                )
+
+    @discord.ui.button(label="🗺️ Move Together", style=discord.ButtonStyle.primary, row=1)
+    async def move_button(self, interaction: discord.Interaction, button: Button):
+        """Move party to new zone (leader only)"""
+        if not self.is_leader:
+            await interaction.response.send_message(
+                "❌ Only the team leader can move the team.",
+                ephemeral=True
+            )
+            return
+
+        from wild_area_manager import WildAreaManager
+
+        wild_area_manager = WildAreaManager(self.bot.db)
+
+        # Get available zones
+        zones = wild_area_manager.get_zones_in_area(self.party['area_id'])
+
+        if not zones:
+            await interaction.response.send_message(
+                "❌ No zones available in this area.",
+                ephemeral=True
+            )
+            return
+
+        # Show zone selection
+        view = ZoneSelectView(self.bot, self.party, zones)
+        await interaction.response.send_message(
+            "Select a zone to travel to:",
+            view=view,
+            ephemeral=True
+        )
+
+
+class ZoneSelectView(View):
+    """View for selecting a zone to travel to"""
+
+    def __init__(self, bot, party: Dict, zones: List[Dict]):
+        super().__init__(timeout=300)
+        self.bot = bot
+        self.party = party
+
+        # Add dropdown with zones
+        options = []
+        for zone in zones[:25]:  # Discord limit
+            options.append(
+                discord.SelectOption(
+                    label=zone['name'],
+                    description=f"Cost: {zone['zone_travel_cost']} stamina per member",
+                    value=zone['zone_id']
+                )
+            )
+
+        select = Select(
+            placeholder="Choose a zone...",
+            options=options,
+            row=0
+        )
+        select.callback = self.zone_selected
+        self.add_item(select)
+
+    async def zone_selected(self, interaction: discord.Interaction):
+        """Move party to selected zone"""
+        from wild_area_manager import WildAreaManager, PartyManager
+
+        wild_area_manager = WildAreaManager(self.bot.db)
+        party_manager = PartyManager(self.bot.db)
+
+        zone_id = interaction.data['values'][0]
+        zone = wild_area_manager.get_zone(zone_id)
+
+        if not zone:
+            await interaction.response.send_message(
+                "❌ Zone not found.",
+                ephemeral=True
+            )
+            return
+
+        # Move party
+        success, message = party_manager.move_party_to_zone(
+            self.party['party_id'],
+            zone_id,
+            zone['zone_travel_cost']
+        )
+
+        if success:
+            await interaction.response.send_message(
+                f"✅ Team moved to **{zone['name']}**! {message}",
+                ephemeral=False  # Make visible to all party members
+            )
+        else:
+            await interaction.response.send_message(
+                f"❌ Failed to move: {message}",
+                ephemeral=True
+            )
+
+
+class ConfirmView(View):
+    """Simple yes/no confirmation view"""
+
+    def __init__(self):
+        super().__init__(timeout=60)
+        self.value = None
+
+    @discord.ui.button(label="✅ Yes", style=discord.ButtonStyle.success)
+    async def confirm_button(self, interaction: discord.Interaction, button: Button):
+        """Confirm action"""
+        self.value = True
+        self.stop()
+        await interaction.response.defer()
+
+    @discord.ui.button(label="❌ No", style=discord.ButtonStyle.danger)
+    async def cancel_button(self, interaction: discord.Interaction, button: Button):
+        """Cancel action"""
+        self.value = False
+        self.stop()
+        await interaction.response.defer()
     
