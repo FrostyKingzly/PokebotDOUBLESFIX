@@ -2113,9 +2113,11 @@ class PvPChallengeSetupView(View):
         self.is_ranked = is_ranked
         self.visible_opponents = opponents[:25]
         self.selected_opponent_id: Optional[int] = None
+        self.selected_partner_id: Optional[int] = None  # For multi battles
         self.selected_format = BattleFormat.SINGLES if BattleFormat else None
         self.team_size = 1
         self.pending_rank_context: Dict[str, Any] = {}
+        self.partner_select = None  # Will be added dynamically
 
         opponent_options = []
         for trainer in self.visible_opponents:
@@ -2142,7 +2144,8 @@ class PvPChallengeSetupView(View):
 
         format_options = [
             discord.SelectOption(label="Singles", value="singles", description="1 active Pokémon"),
-            discord.SelectOption(label="Doubles", value="doubles", description="2 active Pokémon")
+            discord.SelectOption(label="Doubles", value="doubles", description="2 active Pokémon"),
+            discord.SelectOption(label="Multi", value="multi", description="2v2 with partners")
         ]
         format_select = Select(
             placeholder="Choose battle format",
@@ -2198,6 +2201,47 @@ class PvPChallengeSetupView(View):
                 self.selected_format = BattleFormat(value)
             except ValueError:
                 self.selected_format = BattleFormat.SINGLES
+
+        # For multi battles, we need a partner selector
+        if value == "multi" and not self.partner_select:
+            # Add partner selection dropdown
+            partner_options = []
+            for trainer in self.visible_opponents:
+                trainer_name = getattr(trainer, 'trainer_name', 'Trainer')
+                discord_id = getattr(trainer, 'discord_user_id', 0)
+                # Exclude the selected opponent
+                if discord_id != self.selected_opponent_id:
+                    description = f"ID: {discord_id}"
+                    partner_options.append(
+                        discord.SelectOption(
+                            label=f"{trainer_name} (Partner)"[:100],
+                            description=description[:100],
+                            value=str(discord_id)
+                        )
+                    )
+
+            if partner_options:
+                self.partner_select = Select(
+                    placeholder="Choose your partner...",
+                    options=partner_options[:25],
+                    min_values=1,
+                    max_values=1,
+                    custom_id="multi_partner_select",
+                    row=3
+                )
+                self.partner_select.callback = self.partner_callback
+                self.add_item(self.partner_select)
+        elif value != "multi" and self.partner_select:
+            # Remove partner selector if changing away from multi
+            self.remove_item(self.partner_select)
+            self.partner_select = None
+            self.selected_partner_id = None
+
+        await interaction.response.defer()
+
+    async def partner_callback(self, interaction: discord.Interaction):
+        value = interaction.data.get('values', [None])[0]
+        self.selected_partner_id = int(value) if value else None
         await interaction.response.defer()
 
     async def size_callback(self, interaction: discord.Interaction):
@@ -2209,7 +2253,13 @@ class PvPChallengeSetupView(View):
     def _format_label(self) -> str:
         if not self.selected_format or not BattleFormat:
             return "Singles"
-        return "Singles" if self.selected_format == BattleFormat.SINGLES else "Doubles"
+        if self.selected_format == BattleFormat.SINGLES:
+            return "Singles"
+        elif self.selected_format == BattleFormat.DOUBLES:
+            return "Doubles"
+        elif self.selected_format == BattleFormat.MULTI:
+            return "Multi (2v2)"
+        return "Singles"
 
     async def send_challenge(self, interaction: discord.Interaction):
         if self.selected_opponent_id is None:
@@ -2218,6 +2268,27 @@ class PvPChallengeSetupView(View):
                 ephemeral=True
             )
             return
+
+        # For multi battles, need to select a partner
+        if BattleFormat and self.selected_format == BattleFormat.MULTI:
+            if self.selected_partner_id is None:
+                await interaction.response.send_message(
+                    "❌ Select a partner for multi battle!",
+                    ephemeral=True
+                )
+                return
+            if self.selected_partner_id == self.selected_opponent_id:
+                await interaction.response.send_message(
+                    "❌ Your partner can't be your opponent!",
+                    ephemeral=True
+                )
+                return
+            if self.selected_partner_id == self.challenger.id:
+                await interaction.response.send_message(
+                    "❌ You can't partner with yourself!",
+                    ephemeral=True
+                )
+                return
 
         team_size = max(1, min(6, self.team_size))
         if BattleFormat and self.selected_format == BattleFormat.DOUBLES and team_size < 2:
@@ -2313,27 +2384,50 @@ class PvPChallengeSetupView(View):
         await interaction.response.defer(ephemeral=True)
 
         opponent_member = None
+        partner_member = None
         if self.guild:
             opponent_member = self.guild.get_member(self.selected_opponent_id)
+            if self.selected_partner_id:
+                partner_member = self.guild.get_member(self.selected_partner_id)
         opponent_mention = opponent_member.mention if opponent_member else f"<@{self.selected_opponent_id}>"
+        partner_mention = partner_member.mention if partner_member else f"<@{self.selected_partner_id}>"
         challenger_mention = self.challenger.mention
+
+        # Check if this is a multi battle
+        is_multi = BattleFormat and self.selected_format == BattleFormat.MULTI
 
         if self.is_ranked:
             title = "🏆 Ranked PvP Challenge"
             color = discord.Color.gold()
-            description = (
-                f"{challenger_mention} has issued a ranked challenge to {opponent_mention}!\n"
-                f"Location: **{self.location_name}**"
-            )
-            footer_text = "Ranked victories grant Challenger points."
+            if is_multi:
+                description = (
+                    f"{challenger_mention} & {partner_mention} challenge {opponent_mention}'s team to a multi battle!\n"
+                    f"Location: **{self.location_name}**"
+                )
+                footer_text = "The challenged trainer must find a partner to accept."
+            else:
+                description = (
+                    f"{challenger_mention} has issued a ranked challenge to {opponent_mention}!\n"
+                    f"Location: **{self.location_name}**"
+                )
+                footer_text = "Ranked victories grant Challenger points."
         else:
-            title = "⚔️ PvP Challenge"
-            color = discord.Color.red()
-            description = (
-                f"{challenger_mention} has challenged {opponent_mention}!\n"
-                f"Location: **{self.location_name}**"
-            )
-            footer_text = "Only the challenged trainer can accept."
+            if is_multi:
+                title = "⚔️ Multi Battle Challenge"
+                color = discord.Color.purple()
+                description = (
+                    f"{challenger_mention} & {partner_mention} challenge {opponent_mention}'s team to a multi battle!\n"
+                    f"Location: **{self.location_name}**"
+                )
+                footer_text = "The challenged trainer must find a partner to accept."
+            else:
+                title = "⚔️ PvP Challenge"
+                color = discord.Color.red()
+                description = (
+                    f"{challenger_mention} has challenged {opponent_mention}!\n"
+                    f"Location: **{self.location_name}**"
+                )
+                footer_text = "Only the challenged trainer can accept."
 
         embed = discord.Embed(
             title=title,
@@ -2347,21 +2441,41 @@ class PvPChallengeSetupView(View):
         )
         embed.set_footer(text=footer_text)
 
-        response_view = PvPChallengeResponseView(
-            bot=self.bot,
-            challenger_id=self.challenger.id,
-            opponent_id=self.selected_opponent_id,
-            battle_format=self.selected_format or (BattleFormat.SINGLES if BattleFormat else None),
-            team_size=team_size,
-            location_id=self.location_id,
-            location_name=self.location_name,
-            challenger_name=getattr(challenger_trainer, 'trainer_name', self.challenger.display_name),
-            opponent_name=getattr(opponent_trainer, 'trainer_name', opponent_member.display_name if opponent_member else 'Trainer'),
-            is_ranked=self.is_ranked
-        )
+        if is_multi:
+            # Use Multi Battle Response View for 4-player battles
+            response_view = MultiPvPChallengeResponseView(
+                bot=self.bot,
+                challenger_id=self.challenger.id,
+                partner_id=self.selected_partner_id,
+                opponent_id=self.selected_opponent_id,
+                team_size=team_size,
+                location_id=self.location_id,
+                location_name=self.location_name,
+                challenger_name=getattr(challenger_trainer, 'trainer_name', self.challenger.display_name),
+                partner_name=partner_member.display_name if partner_member else 'Partner',
+                opponent_name=getattr(opponent_trainer, 'trainer_name', opponent_member.display_name if opponent_member else 'Trainer'),
+                is_ranked=self.is_ranked,
+                visible_trainers=self.visible_opponents
+            )
+            content = f"{opponent_mention}, {challenger_mention} & {partner_mention} want to battle!"
+        else:
+            # Use regular PvP Response View
+            response_view = PvPChallengeResponseView(
+                bot=self.bot,
+                challenger_id=self.challenger.id,
+                opponent_id=self.selected_opponent_id,
+                battle_format=self.selected_format or (BattleFormat.SINGLES if BattleFormat else None),
+                team_size=team_size,
+                location_id=self.location_id,
+                location_name=self.location_name,
+                challenger_name=getattr(challenger_trainer, 'trainer_name', self.challenger.display_name),
+                opponent_name=getattr(opponent_trainer, 'trainer_name', opponent_member.display_name if opponent_member else 'Trainer'),
+                is_ranked=self.is_ranked
+            )
+            content = f"{opponent_mention}, {challenger_mention} wants to battle!"
 
         message = await interaction.channel.send(
-            content=f"{opponent_mention}, {challenger_mention} wants to battle!",
+            content=content,
             embed=embed,
             view=response_view
         )
@@ -2544,6 +2658,233 @@ class PvPChallengeResponseView(View):
         self.stop()
 
 
+class MultiPvPChallengeResponseView(View):
+    """Handles multi battle PvP challenges (4 players: 2v2)"""
+
+    def __init__(
+        self,
+        bot,
+        challenger_id: int,
+        partner_id: int,
+        opponent_id: int,
+        team_size: int,
+        location_id: str,
+        location_name: str,
+        challenger_name: str,
+        partner_name: str,
+        opponent_name: str,
+        is_ranked: bool,
+        visible_trainers: List
+    ):
+        super().__init__(timeout=120)
+        self.bot = bot
+        self.challenger_id = challenger_id
+        self.partner_id = partner_id
+        self.opponent_id = opponent_id
+        self.team_size = team_size
+        self.location_id = location_id
+        self.location_name = location_name
+        self.challenger_name = challenger_name
+        self.partner_name = partner_name
+        self.opponent_name = opponent_name
+        self.is_ranked = is_ranked
+        self.message = None
+        self.opponent_partner_id = None
+        self.visible_trainers = visible_trainers
+
+        # Add partner select for opponent
+        partner_options = []
+        for trainer in visible_trainers[:25]:
+            trainer_name = getattr(trainer, 'trainer_name', 'Trainer')
+            discord_id = getattr(trainer, 'discord_user_id', 0)
+            # Exclude already participating players
+            if discord_id not in [challenger_id, partner_id, opponent_id]:
+                description = f"ID: {discord_id}"
+                partner_options.append(
+                    discord.SelectOption(
+                        label=f"{trainer_name} (Partner)"[:100],
+                        description=description[:100],
+                        value=str(discord_id)
+                    )
+                )
+
+        if partner_options:
+            opponent_partner_select = Select(
+                placeholder="Choose your partner (opponent only)...",
+                options=partner_options,
+                min_values=1,
+                max_values=1,
+                custom_id="opponent_partner_select"
+            )
+            opponent_partner_select.callback = self.opponent_partner_callback
+            self.add_item(opponent_partner_select)
+
+    async def opponent_partner_callback(self, interaction: discord.Interaction):
+        """Opponent selects their partner"""
+        if interaction.user.id != self.opponent_id:
+            await interaction.response.send_message("❌ Only the challenged trainer can select a partner!", ephemeral=True)
+            return
+
+        value = interaction.data.get('values', [None])[0]
+        self.opponent_partner_id = int(value) if value else None
+
+        # Update message to show partner selection
+        await interaction.response.send_message(
+            f"✅ Partner selected! Now you and your partner can accept the challenge.",
+            ephemeral=True
+        )
+
+        # Add accept/decline buttons
+        self.clear_items()
+
+        accept_button = discord.ui.Button(
+            label="Accept (Both Players)",
+            style=discord.ButtonStyle.success,
+            emoji="✅"
+        )
+        accept_button.callback = self.accept_multi_battle
+        self.add_item(accept_button)
+
+        decline_button = discord.ui.Button(
+            label="Decline",
+            style=discord.ButtonStyle.danger,
+            emoji="❌"
+        )
+        decline_button.callback = self.decline_multi_battle
+        self.add_item(decline_button)
+
+        # Update the challenge message
+        if self.message:
+            try:
+                opponent_partner_member = interaction.guild.get_member(self.opponent_partner_id)
+                opponent_partner_mention = opponent_partner_member.mention if opponent_partner_member else f"<@{self.opponent_partner_id}>"
+                await self.message.edit(
+                    content=f"**Team 1:** <@{self.challenger_id}> & <@{self.partner_id}> vs **Team 2:** <@{self.opponent_id}> & {opponent_partner_mention}\n\n"
+                            f"{opponent_partner_mention}, <@{self.opponent_id}> needs you to accept!",
+                    view=self
+                )
+            except:
+                pass
+
+    async def accept_multi_battle(self, interaction: discord.Interaction):
+        """Accept the multi battle (requires both team 2 players to accept)"""
+        if interaction.user.id not in [self.opponent_id, self.opponent_partner_id]:
+            await interaction.response.send_message("❌ Only the challenged team can accept!", ephemeral=True)
+            return
+
+        if not self.opponent_partner_id:
+            await interaction.response.send_message("❌ Select a partner first!", ephemeral=True)
+            return
+
+        await interaction.response.defer()
+
+        # Start the 4-player multi battle
+        battle_cog = self.bot.get_cog('BattleCog')
+        if not battle_cog:
+            await interaction.followup.send("❌ Battle system not available.", ephemeral=True)
+            return
+
+        # Check all players are still available
+        busy_ids = set(battle_cog.user_battles.keys())
+        all_player_ids = [self.challenger_id, self.partner_id, self.opponent_id, self.opponent_partner_id]
+        if any(pid in busy_ids for pid in all_player_ids):
+            await self._finalize("❌ One of the players is now in another battle.")
+            await interaction.followup.send("❌ One of the players is now in another battle.", ephemeral=True)
+            return
+
+        # Get all player parties
+        try:
+            p1_party_data = self.bot.player_manager.get_party(self.challenger_id)
+            p2_party_data = self.bot.player_manager.get_party(self.partner_id)
+            p3_party_data = self.bot.player_manager.get_party(self.opponent_id)
+            p4_party_data = self.bot.player_manager.get_party(self.opponent_partner_id)
+
+            p1_pokemon = [reconstruct_pokemon_from_data(pd, self.bot.species_db.get_species(pd['species_dex_number'])) for pd in p1_party_data]
+            p2_pokemon = [reconstruct_pokemon_from_data(pd, self.bot.species_db.get_species(pd['species_dex_number'])) for pd in p2_party_data]
+            p3_pokemon = [reconstruct_pokemon_from_data(pd, self.bot.species_db.get_species(pd['species_dex_number'])) for pd in p3_party_data]
+            p4_pokemon = [reconstruct_pokemon_from_data(pd, self.bot.species_db.get_species(pd['species_dex_number'])) for pd in p4_party_data]
+
+            # Check all have healthy Pokemon
+            healths = [
+                sum(1 for p in p1_pokemon if p.current_hp > 0),
+                sum(1 for p in p2_pokemon if p.current_hp > 0),
+                sum(1 for p in p3_pokemon if p.current_hp > 0),
+                sum(1 for p in p4_pokemon if p.current_hp > 0)
+            ]
+
+            if any(h < 1 for h in healths):
+                await self._finalize("❌ All players need at least 1 healthy Pokémon!")
+                await interaction.followup.send("❌ All players need at least 1 healthy Pokémon!", ephemeral=True)
+                return
+
+            # Start the multi battle
+            from battle_engine_v2 import BattleType
+
+            p1_member = interaction.guild.get_member(self.challenger_id)
+            p2_member = interaction.guild.get_member(self.partner_id)
+            p3_member = interaction.guild.get_member(self.opponent_id)
+            p4_member = interaction.guild.get_member(self.opponent_partner_id)
+
+            battle_id = battle_cog.battle_engine.start_multi_battle(
+                trainer1_id=self.challenger_id,
+                trainer1_name=p1_member.display_name if p1_member else self.challenger_name,
+                trainer1_party=p1_pokemon,
+                partner1_id=self.partner_id,
+                partner1_name=p2_member.display_name if p2_member else self.partner_name,
+                partner1_party=p2_pokemon,
+                partner1_is_ai=False,
+                trainer2_id=self.opponent_id,
+                trainer2_name=p3_member.display_name if p3_member else self.opponent_name,
+                trainer2_party=p3_pokemon,
+                partner2_id=self.opponent_partner_id,
+                partner2_name=p4_member.display_name if p4_member else "Opponent Partner",
+                partner2_party=p4_pokemon,
+                partner2_is_ai=False,
+                is_ranked=self.is_ranked,
+                is_pve=False
+            )
+
+            # Register all players
+            for pid in all_player_ids:
+                battle_cog.user_battles[pid] = battle_id
+
+            # Update challenge message
+            await self._finalize(f"✅ Multi battle accepted! Battle starting...")
+
+            # Start battle UI
+            await battle_cog.start_battle_ui(
+                interaction=interaction,
+                battle_id=battle_id,
+                battle_type=BattleType.PVP
+            )
+
+        except Exception as e:
+            await interaction.followup.send(f"❌ Error starting battle: {str(e)}", ephemeral=True)
+            return
+
+        self.stop()
+
+    async def decline_multi_battle(self, interaction: discord.Interaction):
+        """Decline the multi battle"""
+        if interaction.user.id not in [self.opponent_id, self.opponent_partner_id]:
+            await interaction.response.send_message("❌ Only the challenged team can decline!", ephemeral=True)
+            return
+
+        await interaction.response.send_message("❌ Multi battle declined.", ephemeral=True)
+        await self._finalize(f"❌ <@{interaction.user.id}> declined the multi battle.")
+        self.stop()
+
+    async def _finalize(self, content: str):
+        """Update the challenge message and disable buttons"""
+        if self.message:
+            for item in self.children:
+                item.disabled = True
+            try:
+                await self.message.edit(content=content, embed=None, view=self)
+            except:
+                pass
+
+
 class MultiPartnerSelectView(View):
     """Select a partner for a multi battle"""
 
@@ -2593,34 +2934,48 @@ class MultiPartnerSelectView(View):
             )
             return
 
-        # Send partner invitation
+        if not interaction.channel:
+            await interaction.response.send_message(
+                "❌ This channel is unavailable for sending the invitation.",
+                ephemeral=True
+            )
+            return
+
+        await interaction.response.defer(ephemeral=True)
+
+        # Send partner invitation in the channel
         invite_view = MultiPartnerInviteView(
             bot=self.bot,
             initiator=self.initiator,
             partner=partner,
             npc_data=self.npc_data,
             location=self.location,
-            ranked=self.ranked
+            ranked=self.ranked,
+            channel=interaction.channel
         )
 
-        # Send invitation to partner
-        try:
-            await partner.send(
-                f"🤝 **Multi Battle Invitation!**\n"
-                f"{self.initiator.display_name} has invited you to team up for a multi battle against "
-                f"**{self.npc_data.get('name')}** and their partner in **{self.location.get('name')}**!\n\n"
-                f"Do you accept?",
-                view=invite_view
-            )
-            await interaction.response.send_message(
-                f"✅ Invitation sent to {partner.display_name}! Waiting for their response...",
-                ephemeral=True
-            )
-        except discord.Forbidden:
-            await interaction.response.send_message(
-                f"❌ Could not send invitation to {partner.display_name}. They may have DMs disabled.",
-                ephemeral=True
-            )
+        embed = discord.Embed(
+            title="🤝 Multi Battle Invitation!",
+            description=(
+                f"{self.initiator.mention} has invited {partner.mention} to team up for a multi battle!\n\n"
+                f"**Opponents:** {self.npc_data.get('name')} & Partner\n"
+                f"**Location:** {self.location.get('name')}"
+            ),
+            color=discord.Color.blue()
+        )
+        embed.set_footer(text="Only the invited partner can accept or decline.")
+
+        message = await interaction.channel.send(
+            content=f"{partner.mention}, {self.initiator.mention} wants to team up!",
+            embed=embed,
+            view=invite_view
+        )
+        invite_view.message = message
+
+        await interaction.followup.send(
+            f"✅ Invitation sent to {partner.display_name}! Waiting for their response...",
+            ephemeral=True
+        )
 
         self.stop()
 
@@ -2629,14 +2984,26 @@ class MultiPartnerInviteView(View):
     """Accept/decline multi battle partner invitation"""
 
     def __init__(self, bot, initiator: discord.Member, partner: discord.Member,
-                 npc_data: dict, location: dict, ranked: bool = False):
-        super().__init__(timeout=300)
+                 npc_data: dict, location: dict, ranked: bool = False, channel=None):
+        super().__init__(timeout=120)
         self.bot = bot
         self.initiator = initiator
         self.partner = partner
         self.npc_data = npc_data
         self.location = location
         self.ranked = ranked
+        self.channel = channel
+        self.message = None
+
+    async def _finalize(self, content: str):
+        """Update the invitation message and disable buttons"""
+        if self.message:
+            for item in self.children:
+                item.disabled = True
+            try:
+                await self.message.edit(content=content, embed=None, view=self)
+            except:
+                pass
 
     @discord.ui.button(label="Accept", style=discord.ButtonStyle.success, emoji="✅")
     async def accept_button(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -2656,6 +3023,7 @@ class MultiPartnerInviteView(View):
                 f"❌ {self.initiator.display_name} is now in another battle!",
                 ephemeral=True
             )
+            await self._finalize(f"❌ Multi battle cancelled - {self.initiator.display_name} is in another battle.")
             self.stop()
             return
 
@@ -2664,6 +3032,7 @@ class MultiPartnerInviteView(View):
                 "❌ You are now in another battle!",
                 ephemeral=True
             )
+            await self._finalize(f"❌ Multi battle cancelled - {self.partner.display_name} is in another battle.")
             self.stop()
             return
 
@@ -2693,6 +3062,7 @@ class MultiPartnerInviteView(View):
                 f"({self.initiator.display_name}: {initiator_healthy}, {self.partner.display_name}: {partner_healthy})",
                 ephemeral=True
             )
+            await self._finalize(f"❌ Multi battle cancelled - not enough healthy Pokémon.")
             self.stop()
             return
 
@@ -2741,24 +3111,14 @@ class MultiPartnerInviteView(View):
         battle_cog.user_battles[self.initiator.id] = battle_id
         battle_cog.user_battles[self.partner.id] = battle_id
 
-        # Notify initiator
-        try:
-            await self.initiator.send(
-                f"✅ {self.partner.display_name} accepted! Multi battle starting..."
-            )
-        except:
-            pass
+        # Update invitation message
+        await self._finalize(f"✅ {self.partner.mention} accepted! Multi battle starting...")
 
-        # Start battle UI for partner
+        # Start battle UI in the channel
         await battle_cog.start_battle_ui(
             interaction=interaction,
             battle_id=battle_id,
             battle_type=BattleType.TRAINER
-        )
-
-        await interaction.followup.send(
-            "✅ Multi battle started! Good luck!",
-            ephemeral=True
         )
 
         self.stop()
@@ -2772,13 +3132,8 @@ class MultiPartnerInviteView(View):
 
         await interaction.response.send_message("❌ Multi battle invitation declined.", ephemeral=True)
 
-        # Notify initiator
-        try:
-            await self.initiator.send(
-                f"❌ {self.partner.display_name} declined your multi battle invitation."
-            )
-        except:
-            pass
+        # Update invitation message
+        await self._finalize(f"❌ {self.partner.mention} declined the multi battle invitation.")
 
         self.stop()
 
