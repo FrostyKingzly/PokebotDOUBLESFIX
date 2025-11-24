@@ -1387,7 +1387,7 @@ class ChannelLocationSelectView(discord.ui.View):
         """Create a new wild area"""
         from wild_area_manager import WildAreaManager
 
-        wild_area_manager = WildAreaManager(self.bot.db)
+        wild_area_manager = WildAreaManager(self.bot.player_manager.db)
 
         # Create area
         success = wild_area_manager.create_wild_area(area_id, name, description)
@@ -1426,7 +1426,7 @@ class ChannelLocationSelectView(discord.ui.View):
         """Create a zone in a wild area"""
         from wild_area_manager import WildAreaManager
 
-        wild_area_manager = WildAreaManager(self.bot.db)
+        wild_area_manager = WildAreaManager(self.bot.player_manager.db)
 
         # Create zone
         success = wild_area_manager.create_zone(
@@ -1468,7 +1468,7 @@ class ChannelLocationSelectView(discord.ui.View):
         """Enter a player into a wild area"""
         from wild_area_manager import WildAreaManager
 
-        wild_area_manager = WildAreaManager(self.bot.db)
+        wild_area_manager = WildAreaManager(self.bot.player_manager.db)
 
         # Check if player exists
         if not self.bot.player_manager.player_exists(user.id):
@@ -1507,7 +1507,7 @@ class ChannelLocationSelectView(discord.ui.View):
         """Exit a player from a wild area"""
         from wild_area_manager import WildAreaManager
 
-        wild_area_manager = WildAreaManager(self.bot.db)
+        wild_area_manager = WildAreaManager(self.bot.player_manager.db)
 
         # Exit wild area
         exited = wild_area_manager.exit_wild_area(user.id, success)
@@ -1552,7 +1552,7 @@ class ChannelLocationSelectView(discord.ui.View):
         """Create a static encounter"""
         from wild_area_manager import StaticEncounterManager
 
-        static_encounter_manager = StaticEncounterManager(self.bot.db)
+        static_encounter_manager = StaticEncounterManager(self.bot.player_manager.db)
 
         # Validate encounter type
         valid_types = ['public_wild', 'player_specific', 'forced']
@@ -1613,7 +1613,7 @@ class ChannelLocationSelectView(discord.ui.View):
         """List all wild areas"""
         from wild_area_manager import WildAreaManager
 
-        wild_area_manager = WildAreaManager(self.bot.db)
+        wild_area_manager = WildAreaManager(self.bot.player_manager.db)
         areas = wild_area_manager.get_all_wild_areas()
 
         if not areas:
