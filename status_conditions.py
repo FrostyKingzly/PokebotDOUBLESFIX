@@ -235,11 +235,13 @@ class StatusConditionManager:
                                 VolatileStatus.INFESTATION.value]:
                 damage = max(1, pokemon.max_hp // 8)
                 pokemon.current_hp = max(0, pokemon.current_hp - damage)
-                messages.append(f"{pokemon.species_name} is hurt by {status_name.replace("_", " ").title()}! (-{damage} HP)")
+                status_display = status_name.replace("_", " ").title()
+                messages.append(f"{pokemon.species_name} is hurt by {status_display}! (-{damage} HP)")
 
                 if status.tick_turn():
                     volatiles_to_remove.append(status_name)
-                    messages.append(f"{pokemon.species_name} was freed from {status_name.replace("_", " ").title()}!")
+                    status_display = status_name.replace("_", " ").title()
+                    messages.append(f"{pokemon.species_name} was freed from {status_display}!")
 
 
         # Generic duration tick for any other temporaries (e.g., endure, protect)

@@ -2,6 +2,7 @@
 Pokemon Management Cog - Commands for managing party and boxes
 """
 
+import asyncio
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -255,12 +256,18 @@ class BoxManagementView(View):
 
 class PokemonActionsView(View):
     """All actions available for a specific Pokemon"""
-    
+
     def __init__(self, bot, pokemon: dict, species: dict):
         super().__init__(timeout=300)
         self.bot = bot
         self.pokemon = pokemon
         self.species = species
+
+        # Check if Pokemon can evolve and add button dynamically
+        if hasattr(bot, 'item_usage_manager'):
+            can_evolve, method, evolution_data = bot.item_usage_manager.can_evolve(pokemon)
+            if can_evolve:
+                self.add_evolution_button()
     
     @discord.ui.button(label="Nickname", style=discord.ButtonStyle.primary, row=0)
     async def nickname_button(self, interaction: discord.Interaction, button: Button):
@@ -403,9 +410,92 @@ class PokemonActionsView(View):
         
 
         embed = EmbedBuilder.pokemon_summary(pokemon, self.species, move_data_list)
-        
+
         self.pokemon = pokemon
         await interaction.response.edit_message(embed=embed, view=self)
+
+    def add_evolution_button(self):
+        """Dynamically add evolution button"""
+        button = Button(
+            label="⭐ Evolve",
+            style=discord.ButtonStyle.success,
+            row=1
+        )
+        button.callback = self.evolve_button
+        self.add_item(button)
+
+    async def evolve_button(self, interaction: discord.Interaction):
+        """Handle Pokemon evolution with animation sequence"""
+        # Check evolution eligibility
+        can_evolve, method, evolution_data = self.bot.item_usage_manager.can_evolve(self.pokemon)
+
+        if not can_evolve:
+            await interaction.response.send_message(
+                "[X] This Pokemon cannot evolve right now!",
+                ephemeral=True
+            )
+            return
+
+        # Get evolution target
+        if method == 'multiple':
+            # Multiple evolution options (e.g., Eevee)
+            await interaction.response.send_message(
+                "[!] This Pokemon has multiple evolution options! Use an evolution stone to choose.",
+                ephemeral=True
+            )
+            return
+
+        evolve_into = evolution_data.get('into')
+        if not evolve_into:
+            await interaction.response.send_message("[X] Evolution data error!", ephemeral=True)
+            return
+
+        # Get new species data
+        new_species_id = evolve_into
+        new_species = self.bot.species_db.get_species_by_name(new_species_id)
+        if not new_species:
+            await interaction.response.send_message("[X] Evolution species not found!", ephemeral=True)
+            return
+
+        old_name = self.species['name']
+        new_name = new_species['name']
+
+        # Evolution animation sequence
+        await interaction.response.send_message(
+            f"✨ What? **{old_name}** is evolving!",
+            ephemeral=True
+        )
+        await asyncio.sleep(2)
+
+        # Perform evolution
+        success = self.bot.item_usage_manager._trigger_evolution(
+            interaction.user.id,
+            self.pokemon,
+            evolve_into
+        )
+
+        if success:
+            await interaction.followup.send(
+                f"✨✨✨\n"
+                f"Congratulations! Your **{old_name}** evolved into **{new_name}**!\n"
+                f"✨✨✨",
+                ephemeral=True
+            )
+
+            # Refresh the Pokemon view
+            updated_pokemon = self.bot.player_manager.get_pokemon(self.pokemon['pokemon_id'])
+            if updated_pokemon:
+                move_data_list = []
+                for move in updated_pokemon['moves']:
+                    move_data = self.bot.moves_db.get_move(move['move_id'])
+                    if move_data:
+                        move_data_list.append(move_data)
+
+                embed = EmbedBuilder.pokemon_summary(updated_pokemon, new_species, move_data_list)
+                new_view = PokemonActionsView(self.bot, updated_pokemon, new_species)
+                await interaction.message.edit(embed=embed, view=new_view)
+        else:
+            await interaction.followup.send("[X] Evolution failed!", ephemeral=True)
 
 
 class GiveItemView(View):

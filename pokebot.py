@@ -24,6 +24,7 @@ from ui.buttons import MainMenuView
 from database import (SpeciesDatabase, MovesDatabase, AbilitiesDatabase,
                      ItemsDatabase, NaturesDatabase, TypeChart)
 from rank_manager import RankManager
+from item_usage_manager import ItemUsageManager
 
 
 class PokemonBot(commands.Bot):
@@ -46,6 +47,7 @@ class PokemonBot(commands.Bot):
         self.encounter_system = None
         self.location_manager = None
         self.rank_manager = None
+        self.item_usage_manager = None
         
         # Load databases
         self.species_db = None
@@ -79,7 +81,8 @@ class PokemonBot(commands.Bot):
             "data/locations.json",
             channel_map_path="config/channel_locations.json"
         )
-        
+        self.item_usage_manager = ItemUsageManager(self)
+
         # Load cogs
         await self.load_cogs()
         
@@ -114,6 +117,7 @@ class PokemonBot(commands.Bot):
             'cogs.wild_cog',
             'cogs.pokemon_cog',
             'cogs.pokemon_management_cog',
+            'cogs.items_cog',
             'cogs.rank_cog',
             'cogs.admin_cog',
         ]
